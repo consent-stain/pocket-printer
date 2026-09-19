@@ -1,4 +1,6 @@
-self.addEventListener('install', () => {
+const CACHE_NAME = 'printer-cache-v1';
+
+self.addEventListener('install', (e) => {
   self.skipWaiting();
 });
 
@@ -9,7 +11,7 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
 
-  // Web Share Target から画像受信時のキャッシュ & リダイレクト
+  // 1. Android Web Share Target (共有画像受信)
   if (url.pathname.endsWith('/share-target') && e.request.method === 'POST') {
     e.respondWith((async () => {
       try {
@@ -24,5 +26,13 @@ self.addEventListener('fetch', (e) => {
       }
       return Response.redirect('./index.html?from_share=1', 303);
     })());
+    return;
+  }
+
+  // 2. 通常のGETリクエスト (PWAインストール要件を満たすハンドラ)
+  if (e.request.method === 'GET') {
+    e.respondWith(
+      fetch(e.request).catch(() => caches.match(e.request))
+    );
   }
 });
