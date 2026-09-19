@@ -1,8 +1,8 @@
 {
   "name": "ポケットプリンター",
   "short_name": "プリンター",
-  "id": "/pocket-printer/",
-  "start_url": "./",
+  "id": "pocket-printer-app",
+  "start_url": "index.html",
   "scope": "./",
   "display": "standalone",
   "background_color": "#f8f9fa",
@@ -32,5 +32,18 @@
       "type": "image/png",
       "purpose": "maskable"
     }
-  ]
+  ],
+  "share_target": {
+    "action": "index.html?from_share_post=1",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "files": [
+        {
+          "name": "image",
+          "accept": ["image/*"]
+        }
+      ]
+    }
+  }
 }

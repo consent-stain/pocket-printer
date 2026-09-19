@@ -1,10 +1,8 @@
-// Service Worker 登録 (初期描画完了後に実行)
+// Service Worker 即時登録 (scopeを明示)
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js').catch((err) => {
-      console.warn('SW登録失敗:', err);
-    });
-  });
+  navigator.serviceWorker.register('./sw.js', { scope: './' })
+    .then((reg) => console.log('SW登録完了:', reg.scope))
+    .catch((err) => console.warn('SW登録失敗:', err));
 }
 
 // C50 サーマルプリンター規格定数 (LPC50_95A5 ESC/POS)
@@ -57,7 +55,6 @@ const updateUI = () => {
 function extractTargetUrl(input) {
   const text = input ? input.trim() : '';
   if (!text) return null;
-
   if (text.startsWith('data:image/')) return text;
 
   try {
@@ -146,7 +143,7 @@ function renderAndProcess() {
     sum += val;
   }
 
-  // 大津の2値化 (整数演算最適化)
+  // 大津の2値化 (整数演算)
   let sumB = 0, wB = 0, varMax = 0, threshold = 128;
   for (let t = 0; t < 256; t++) {
     wB += hist[t];
@@ -171,7 +168,7 @@ function renderAndProcess() {
     h & 0xFF, (h >> 8) & 0xFF
   ], 0);
 
-  // Floyd-Steinberg 誤差拡散 & 1ビットパック
+  // Floyd-Steinberg 誤差拡散 & 1ビットパッキング
   let rasterIdx = 8;
   for (let y = 0; y < h; y++) {
     const row = y * WIDTH_PX;
@@ -241,14 +238,13 @@ function loadImageSource(src, isBlob = false) {
         return;
       }
 
-      // プロキシフォールバック (1回のみ安全に試行)
       if (!isBlob && !src.startsWith('data:') && !src.startsWith('https://corsproxy.io/?')) {
         loadImageSource('https://corsproxy.io/?' + encodeURIComponent(src), false)
           .then(resolve)
           .catch(reject);
       } else {
         if (isBlob) URL.revokeObjectURL(src);
-        setStatus('画像の取得に失敗しました。端末内の画像選択をお試しください。');
+        setStatus('画像の取得に失敗しました。端末内のファイル選択をお使いください。');
         updateUI();
         reject(new Error('Load failed'));
       }
@@ -301,13 +297,9 @@ btnPrint.onclick = async () => {
 
   try {
     setStatus('印刷データを送信中...');
-    // プリンター初期化シーケンス
     await sendPacket(new Uint8Array([0x10, 0xFF, 0xF1, 0x03, 0x10, 0xFF, 0x10, 0x00, 0x02]));
-    // ラスタ画像データ本体送信
     await sendPacket(cachedRaster);
-    // 送りマージン (2.0mm = 16dot)
     await sendPacket(new Uint8Array([0x1B, 0x4A, FEED_DOTS, 0x10, 0xFF, 0xF1, 0x45]));
-    // ヘッド完了待機
     await new Promise(r => setTimeout(r, 80));
     setStatus('印刷が完了しました');
   } catch (err) {

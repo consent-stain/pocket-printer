@@ -1,18 +1,40 @@
-const CACHE_NAME = 'printer-cache-v1';
+const CACHE_NAME = 'pocket-printer-core-v2';
+const PRECACHE_ASSETS = [
+  './',
+  'index.html',
+  'style.css',
+  'app.js',
+  'manifest.json',
+  'icon-192.png',
+  'icon-512.png'
+];
 
+// 1. インストール時にアプリの核となる全ファイルをプリキャッシュ (Android WebAPK 審査の必須条件)
 self.addEventListener('install', (e) => {
-  self.skipWaiting();
+  e.waitUntil(
+    caches.open(CACHE_NAME)
+      .then((cache) => cache.addAll(PRECACHE_ASSETS))
+      .then(() => self.skipWaiting())
+  );
 });
 
+// 2. アクティベーション時に古いキャッシュを一掃
 self.addEventListener('activate', (e) => {
-  e.waitUntil(clients.claim());
+  e.waitUntil(
+    caches.keys().then((keys) => {
+      return Promise.all(
+        keys.filter((k) => k !== CACHE_NAME && k !== 'shared-image').map((k) => caches.delete(k))
+      );
+    }).then(() => clients.claim())
+  );
 });
 
+// 3. 通信ハンドリング
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
 
-  // 1. Android Web Share Target (共有画像受信)
-  if (url.pathname.endsWith('/share-target') && e.request.method === 'POST') {
+  // Web Share Target からの画像共有受信 (POST)
+  if (e.request.method === 'POST' && url.searchParams.get('from_share_post') === '1') {
     e.respondWith((async () => {
       try {
         const formData = await e.request.formData();
@@ -22,17 +44,28 @@ self.addEventListener('fetch', (e) => {
           await cache.put('incoming-image', new Response(file));
         }
       } catch (err) {
-        console.error('共有画像データの解析失敗:', err);
+        console.warn('共有ファイル解析エラー:', err);
       }
       return Response.redirect('./index.html?from_share=1', 303);
     })());
     return;
   }
 
-  // 2. 通常のGETリクエスト (PWAインストール要件を満たすハンドラ)
+  // 通常のGETアクセス: キャッシュ優先 & ネットワークフォールバック
   if (e.request.method === 'GET') {
     e.respondWith(
-      fetch(e.request).catch(() => caches.match(e.request))
+      caches.match(e.request).then((cachedResponse) => {
+        if (cachedResponse) {
+          // バックグラウンドで更新
+          fetch(e.request).then((networkResponse) => {
+            if (networkResponse && networkResponse.status === 200) {
+              caches.open(CACHE_NAME).then((c) => c.put(e.request, networkResponse));
+            }
+          }).catch(() => {});
+          return cachedResponse;
+        }
+        return fetch(e.request);
+      })
     );
   }
 });
