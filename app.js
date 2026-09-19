@@ -1,15 +1,17 @@
-// Service Worker 登録 (PWA & 共有ターゲット)
+// Service Worker 登録 (PWA & 共有ターゲット対応)
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').catch((err) => {
-    console.warn('SW 登録失敗:', err);
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch((err) => {
+      console.warn('SW登録失敗:', err);
+    });
   });
 }
 
-// C50 サーマルプリンター (LPC50_95A5) ESC/POS 規格定数
+// C50 サーマルプリンター規格 (ESC/POS GS v 0 形式)
 const WIDTH_PX = 384;
 const WIDTH_BYTES = 48; // 384 / 8
 const CHUNK_SIZE = 128; // BLE パケット送信単位 (128 bytes)
-const CHUNK_DELAY = 12; // パケット間ウェイト (ms)
+const CHUNK_DELAY = 12; // 送信間隔 (ms)
 const FEED_DOTS = 16;   // カット余白 2.0mm (8 dot/mm * 2.0mm)
 
 // DOM要素参照
@@ -50,18 +52,16 @@ const updateUI = () => {
 };
 
 // =============================================================================
-// URLパース・取得処理
+// URLパース・画像取得
 // =============================================================================
 function extractTargetUrl(input) {
   const text = input ? input.trim() : '';
   if (!text) return null;
 
-  // Base64 データURLならそのまま採用
   if (text.startsWith('data:image/')) return text;
 
   try {
     const parsed = new URL(text);
-    // Google画像検索のリダイレクトリンクから元画像URLを抽出
     if (parsed.searchParams.has('imgurl')) {
       return decodeURIComponent(parsed.searchParams.get('imgurl'));
     }
@@ -74,7 +74,7 @@ function extractTargetUrl(input) {
 function handleUrlLoad() {
   const target = extractTargetUrl(urlInput.value);
   if (!target) {
-    setStatus('URLを入力してください');
+    setStatus('有効なURLを入力してください');
     return;
   }
   loadImageSource(target, false);
@@ -93,18 +93,18 @@ btnPasteUrl.onclick = async () => {
       handleUrlLoad();
     }
   } catch (_) {
-    setStatus('クリップボードの読み取りが拒否されました。直接貼り付けてください。');
+    setStatus('クリップボード読み取りを許可するか、直接貼り付けてください');
   }
 };
 
 // =============================================================================
-// 画像パイプライン (レイアウト + 高速大津2値化 + FS誤差拡散 + ESC/POSラスタ生成)
+// 画像変換 (リサイズ + 高速大津2値化 + FS誤差拡散 + ESC/POSラスタパッキング)
 // =============================================================================
 function renderAndProcess() {
   if (!sourceImage) return;
 
   const mode = modeSelect.value;
-  const hFixed = 230; // 5x3cm 相当 (約230dot)
+  const hFixed = 230; // 5x3cm
   const h = (mode === 'free')
     ? Math.max(1, Math.round(sourceImage.height * (WIDTH_PX / sourceImage.width)))
     : hFixed;
@@ -112,7 +112,6 @@ function renderAndProcess() {
   canvas.width = WIDTH_PX;
   canvas.height = h;
 
-  // 白背景で初期化
   ctx.fillStyle = '#FFFFFF';
   ctx.fillRect(0, 0, WIDTH_PX, h);
 
@@ -147,7 +146,7 @@ function renderAndProcess() {
     sum += val;
   }
 
-  // 大津の2値化 (高速整数除算最適化)
+  // 大津の2値化 (整数除算最適化)
   let sumB = 0, wB = 0, varMax = 0, threshold = 128;
   for (let t = 0; t < 256; t++) {
     wB += hist[t];
@@ -164,7 +163,7 @@ function renderAndProcess() {
   }
   threshold = Math.max(70, Math.min(185, threshold));
 
-  // ESC/POS GS v 0 形式パケット
+  // ESC/POS GS v 0 ヘッダー
   const raster = new Uint8Array(8 + (WIDTH_BYTES * h));
   raster.set([
     0x1D, 0x76, 0x30, 0x00,
@@ -210,7 +209,7 @@ function renderAndProcess() {
 }
 
 function loadImageSource(src, isBlob = false) {
-  if (isPrinting || !src) return Promise.reject(new Error('Invalid state or src'));
+  if (isPrinting || !src) return Promise.reject(new Error('Invalid state'));
   const currentToken = ++loadCounter;
   setStatus('画像を読み込んでいます...');
 
@@ -242,14 +241,14 @@ function loadImageSource(src, isBlob = false) {
         return;
       }
 
-      // CORS保護等への安全なフォールバック
+      // プロキシフォールバック (1度のみ実行)
       if (!isBlob && !src.startsWith('data:') && !src.startsWith('https://corsproxy.io/?')) {
         loadImageSource('https://corsproxy.io/?' + encodeURIComponent(src), false)
           .then(resolve)
           .catch(reject);
       } else {
         if (isBlob) URL.revokeObjectURL(src);
-        setStatus('画像を読み込めませんでした。ファイル選択をお試しください。');
+        setStatus('画像の取得に失敗しました。ファイル選択をお使いください。');
         updateUI();
         reject(new Error('Load failed'));
       }
@@ -302,13 +301,13 @@ btnPrint.onclick = async () => {
 
   try {
     setStatus('印刷データを送信中...');
-    // プリンター初期化コマンド
+    // 初期化シーケンス
     await sendPacket(new Uint8Array([0x10, 0xFF, 0xF1, 0x03, 0x10, 0xFF, 0x10, 0x00, 0x02]));
-    // ラスタデータ本体送信
+    // ラスタ画像データ本体
     await sendPacket(cachedRaster);
     // 送りマージン (2.0mm = 16dot)
     await sendPacket(new Uint8Array([0x1B, 0x4A, FEED_DOTS, 0x10, 0xFF, 0xF1, 0x45]));
-    // サーマルヘッドバッファ完了待機
+    // ヘッド完了待機
     await new Promise(r => setTimeout(r, 80));
     setStatus('印刷が完了しました');
   } catch (err) {
