@@ -9,6 +9,7 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
 
+  // Web Share Target から画像受信時のキャッシュ & リダイレクト
   if (url.pathname.endsWith('/share-target') && e.request.method === 'POST') {
     e.respondWith((async () => {
       try {
@@ -19,7 +20,7 @@ self.addEventListener('fetch', (e) => {
           await cache.put('incoming-image', new Response(file));
         }
       } catch (err) {
-        console.error('Failed to cache shared image:', err);
+        console.error('共有画像データの解析失敗:', err);
       }
       return Response.redirect('./index.html?from_share=1', 303);
     })());

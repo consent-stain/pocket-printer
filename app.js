@@ -1,16 +1,16 @@
-// Service Worker 登録
+// Service Worker 登録 (PWA & 共有ターゲット)
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch((err) => {
-    console.warn('SW registration failed:', err);
+    console.warn('SW 登録失敗:', err);
   });
 }
 
-// LPC50_95A5 ESC/POS 仕様準拠の定数
+// C50 サーマルプリンター (LPC50_95A5) ESC/POS 規格定数
 const WIDTH_PX = 384;
 const WIDTH_BYTES = 48; // 384 / 8
-const CHUNK_SIZE = 128;
-const CHUNK_DELAY = 12; // 送信間隔ウェイト (ms)
-const FEED_DOTS = 16;   // 2.0mm余白 (16 / 8 dot/mm)
+const CHUNK_SIZE = 128; // BLE パケット送信単位 (128 bytes)
+const CHUNK_DELAY = 12; // パケット間ウェイト (ms)
+const FEED_DOTS = 16;   // カット余白 2.0mm (8 dot/mm * 2.0mm)
 
 // DOM要素参照
 const statusEl = document.getElementById('status');
@@ -28,7 +28,7 @@ const btnLoadUrl = document.getElementById('btnLoadUrl');
 const selectZone = document.getElementById('selectZone');
 const fileInput = document.getElementById('fileInput');
 
-// 内部状態
+// 状態管理
 let bleDevice = null;
 let writeChar = null;
 let isPrinting = false;
@@ -50,13 +50,13 @@ const updateUI = () => {
 };
 
 // =============================================================================
-// URLパース＆取得処理
+// URLパース・取得処理
 // =============================================================================
 function extractTargetUrl(input) {
   const text = input ? input.trim() : '';
   if (!text) return null;
 
-  // Base64 データURLならそのまま返す
+  // Base64 データURLならそのまま採用
   if (text.startsWith('data:image/')) return text;
 
   try {
@@ -98,13 +98,13 @@ btnPasteUrl.onclick = async () => {
 };
 
 // =============================================================================
-// 画像パイプライン (レイアウト + 最適化大津2値化 + FS誤差拡散 + ラスタ生成)
+// 画像パイプライン (レイアウト + 高速大津2値化 + FS誤差拡散 + ESC/POSラスタ生成)
 // =============================================================================
 function renderAndProcess() {
   if (!sourceImage) return;
 
   const mode = modeSelect.value;
-  const hFixed = 230; // 5x3cm (約230dot)
+  const hFixed = 230; // 5x3cm 相当 (約230dot)
   const h = (mode === 'free')
     ? Math.max(1, Math.round(sourceImage.height * (WIDTH_PX / sourceImage.width)))
     : hFixed;
@@ -112,6 +112,7 @@ function renderAndProcess() {
   canvas.width = WIDTH_PX;
   canvas.height = h;
 
+  // 白背景で初期化
   ctx.fillStyle = '#FFFFFF';
   ctx.fillRect(0, 0, WIDTH_PX, h);
 
@@ -146,7 +147,7 @@ function renderAndProcess() {
     sum += val;
   }
 
-  // 大津の2値化 (高速化・整数除算最適化)
+  // 大津の2値化 (高速整数除算最適化)
   let sumB = 0, wB = 0, varMax = 0, threshold = 128;
   for (let t = 0; t < 256; t++) {
     wB += hist[t];
@@ -163,7 +164,7 @@ function renderAndProcess() {
   }
   threshold = Math.max(70, Math.min(185, threshold));
 
-  // ESC/POS GS v 0 形式
+  // ESC/POS GS v 0 形式パケット
   const raster = new Uint8Array(8 + (WIDTH_BYTES * h));
   raster.set([
     0x1D, 0x76, 0x30, 0x00,
@@ -171,7 +172,7 @@ function renderAndProcess() {
     h & 0xFF, (h >> 8) & 0xFF
   ], 0);
 
-  // Floyd-Steinberg 誤差拡散 ＆ パッキング
+  // Floyd-Steinberg 誤差拡散 & 1ビットパック
   let rasterIdx = 8;
   for (let y = 0; y < h; y++) {
     const row = y * WIDTH_PX;
@@ -223,7 +224,6 @@ function loadImageSource(src, isBlob = false) {
         resolve();
         return;
       }
-      // 古いBlob URLのみ安全に破棄
       if (currentBlobUrl && currentBlobUrl !== src) {
         URL.revokeObjectURL(currentBlobUrl);
       }
@@ -242,7 +242,7 @@ function loadImageSource(src, isBlob = false) {
         return;
       }
 
-      // プロキシフォールバック (Base64・Blob・既存プロキシ経由以外の場合のみ1度実行)
+      // CORS保護等への安全なフォールバック
       if (!isBlob && !src.startsWith('data:') && !src.startsWith('https://corsproxy.io/?')) {
         loadImageSource('https://corsproxy.io/?' + encodeURIComponent(src), false)
           .then(resolve)
@@ -260,7 +260,7 @@ function loadImageSource(src, isBlob = false) {
 }
 
 // =============================================================================
-// Bluetooth 通信制御
+// Bluetooth 通信制御 (LPC50_95A5 BLE 0xff00/0xff02)
 // =============================================================================
 const onDisconnected = () => {
   writeChar = null;
@@ -302,13 +302,13 @@ btnPrint.onclick = async () => {
 
   try {
     setStatus('印刷データを送信中...');
-    // 初期化シーケンス
+    // プリンター初期化コマンド
     await sendPacket(new Uint8Array([0x10, 0xFF, 0xF1, 0x03, 0x10, 0xFF, 0x10, 0x00, 0x02]));
-    // ラスタ画像データ
+    // ラスタデータ本体送信
     await sendPacket(cachedRaster);
-    // 送り・カット余白 (2.0mm = 16dot)
+    // 送りマージン (2.0mm = 16dot)
     await sendPacket(new Uint8Array([0x1B, 0x4A, FEED_DOTS, 0x10, 0xFF, 0xF1, 0x45]));
-    // バッファフラッシュ待機
+    // サーマルヘッドバッファ完了待機
     await new Promise(r => setTimeout(r, 80));
     setStatus('印刷が完了しました');
   } catch (err) {
@@ -358,7 +358,7 @@ fileInput.onchange = (e) => {
   }
 };
 
-// Android共有メニュー (Web Share Target) 起動時の安全な受け取り
+// Android 共有ターゲット (Web Share Target) 受信処理
 window.addEventListener('DOMContentLoaded', async () => {
   const params = new URLSearchParams(window.location.search);
   if (params.get('from_share') === '1') {
@@ -372,7 +372,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         window.history.replaceState({}, '', window.location.pathname);
       }
     } catch (err) {
-      console.warn('Share target handling error:', err);
+      console.warn('Share target 受信処理エラー:', err);
     }
   }
 });
