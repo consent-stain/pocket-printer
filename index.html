@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>モバイルプリンター印刷</title>
+  <style>
+    :root {
+      --primary: #0d6efd;
+      --bg: #f8f9fa;
+      --border: #dee2e6;
+      --text: #212529;
+      --subtext: #6c757d;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      padding: 16px;
+      max-width: 420px;
+      margin: auto;
+      background: var(--bg);
+      color: var(--text);
+      box-sizing: border-box;
+    }
+    .card {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .btn-group { display: flex; gap: 8px; }
+    button {
+      flex: 1;
+      padding: 10px;
+      font-size: 14px;
+      cursor: pointer;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: #fff;
+      font-weight: 500;
+    }
+    button.primary {
+      background: var(--primary);
+      color: #fff;
+      border-color: var(--primary);
+    }
+    button:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+    .field-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+      font-size: 14px;
+    }
+    .input-row {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+    input[type="text"], select {
+      padding: 8px 10px;
+      font-size: 14px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #fff;
+    }
+    input[type="text"] { flex: 1; }
+    #offsetControl {
+      display: none;
+      background: #f1f3f5;
+      padding: 10px 12px;
+      border-radius: 6px;
+      margin-bottom: 10px;
+      font-size: 13px;
+    }
+    #dropZone {
+      border: 2px dashed #adb5bd;
+      padding: 16px;
+      text-align: center;
+      color: var(--subtext);
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      background: #fafafa;
+    }
+    #dropZone.dragover {
+      border-color: var(--primary);
+      background: #e7f1ff;
+    }
+    #previewCanvas {
+      border: 1px solid var(--border);
+      margin: 10px auto;
+      display: block;
+      width: 100%;
+      max-width: 384px;
+      height: auto;
+      background: #fff;
+      border-radius: 4px;
+    }
+    #status {
+      font-size: 12px;
+      color: var(--subtext);
+      text-align: center;
+      min-height: 18px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 通信制御 -->
+  <div class="card">
+    <div class="btn-group">
+      <button id="btnConnect">プリンター接続</button>
+      <button id="btnPrint" class="primary" disabled>印刷開始</button>
+    </div>
+  </div>
+
+  <!-- 印刷設定・画像入力 -->
+  <div class="card">
+    <div class="field-row">
+      <span>印刷サイズ</span>
+      <select id="modeSelect">
+        <option value="free" selected>用紙幅に合わせる (自動)</option>
+        <option value="fixed-fit">5×3 cm (縮小して全体印刷)</option>
+        <option value="fixed-crop">5×3 cm (用紙幅に合わせて上下調整)</option>
+      </select>
+    </div>
+
+    <!-- 上下トリミング位置微調整スライダー -->
+    <div id="offsetControl">
+      <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+        <span>印刷範囲の上下調整</span>
+        <span id="offsetVal">中央</span>
+      </div>
+      <input type="range" id="offsetRange" min="0" max="100" value="50" style="width: 100%;">
+    </div>
+
+    <div class="input-row">
+      <input type="text" id="urlInput" placeholder="画像のURLを貼り付け">
+      <button id="btnLoadUrl" style="flex: none; width: 64px;">読込</button>
+    </div>
+
+    <div id="dropZone">
+      画像を選択 または <b>コピーして貼り付け (Cmd/Ctrl+V)</b>
+      <input type="file" id="fileInput" accept="image/*" style="display: none;">
+    </div>
+  </div>
+
+  <canvas id="previewCanvas" width="384" height="120"></canvas>
+  <div id="status">プリンターに接続してください</div>
+
+  <script>
+    // =========================================================================
+    // 定数定義 (LPC50 / 58mm サーマル仕様)
+    // =========================================================================
+    const WIDTH_PX = 384;
+    const WIDTH_BYTES = 48; // 384 / 8
+    const CHUNK_SIZE = 128;
+    const CHUNK_DELAY = 12;
+    const FEED_DOTS = 16;   // 2.0mm余白 (16 / 8dot/mm)
+
+    // DOM要素
+    const statusEl = document.getElementById('status');
+    const canvas = document.getElementById('previewCanvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const btnConnect = document.getElementById('btnConnect');
+    const btnPrint = document.getElementById('btnPrint');
+    const modeSelect = document.getElementById('modeSelect');
+    const offsetControl = document.getElementById('offsetControl');
+    const offsetRange = document.getElementById('offsetRange');
+    const offsetVal = document.getElementById('offsetVal');
+    const urlInput = document.getElementById('urlInput');
+    const btnLoadUrl = document.getElementById('btnLoadUrl');
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+
+    // 内部状態
+    let bleDevice = null;
+    let writeChar = null;
+    let isPrinting = false;
+    let sourceImage = null;
+    let cachedRaster = null;
+    let loadCounter = 0;
+    let currentBlobUrl = null;
+
+    const setStatus = (msg) => { statusEl.textContent = msg; };
+
+    const updateUI = () => {
+      const isConnected = Boolean(bleDevice?.gatt?.connected && writeChar);
+      btnPrint.disabled = !(isConnected && cachedRaster && !isPrinting);
+      btnConnect.disabled = isPrinting;
+      btnLoadUrl.disabled = isPrinting;
+      urlInput.disabled = isPrinting;
+      modeSelect.disabled = isPrinting;
+      offsetRange.disabled = isPrinting;
+    };
+
+    // =========================================================================
+    // 画像処理 & 1パス ラスタ変換
+    // =========================================================================
+    function renderAndProcess() {
+      if (!sourceImage) return;
+
+      const mode = modeSelect.value;
+      const hFixed = 230; // 50x30mm 規格
+      const h = (mode === 'free')
+        ? Math.max(1, Math.round(sourceImage.height * (WIDTH_PX / sourceImage.width)))
+        : hFixed;
+
+      canvas.width = WIDTH_PX;
+      canvas.height = h;
+
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, WIDTH_PX, h);
+
+      if (mode === 'free') {
+        ctx.drawImage(sourceImage, 0, 0, WIDTH_PX, h);
+      } else if (mode === 'fixed-fit') {
+        const scale = Math.min(WIDTH_PX / sourceImage.width, h / sourceImage.height);
+        const dw = Math.round(sourceImage.width * scale);
+        const dh = Math.round(sourceImage.height * scale);
+        ctx.drawImage(sourceImage, Math.round((WIDTH_PX - dw) / 2), Math.round((h - dh) / 2), dw, dh);
+      } else {
+        const scale = WIDTH_PX / sourceImage.width;
+        const dh = Math.round(sourceImage.height * scale);
+        const overflow = dh - h;
+        const offset = parseInt(offsetRange.value, 10) / 100;
+        const dy = overflow > 0 ? -Math.round(overflow * offset) : Math.round((h - dh) / 2);
+        ctx.drawImage(sourceImage, 0, dy, WIDTH_PX, dh);
+      }
+
+      const imgData = ctx.getImageData(0, 0, WIDTH_PX, h);
+      const d = imgData.data;
+      const total = WIDTH_PX * h;
+
+      const gray = new Float32Array(total);
+      const hist = new Int32Array(256);
+      let sum = 0;
+
+      for (let i = 0, j = 0; i < d.length; i += 4, j++) {
+        const val = Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]);
+        gray[j] = val;
+        hist[val]++;
+        sum += val;
+      }
+
+      // 大津の2値化 (安全クランプ: 70〜185)
+      let sumB = 0, wB = 0, varMax = 0, threshold = 128;
+      for (let t = 0; t < 256; t++) {
+        wB += hist[t];
+        if (wB === 0) continue;
+        const wF = total - wB;
+        if (wF === 0) break;
+        sumB += t * hist[t];
+        const mB = sumB / wB;
+        const mF = (sum - sumB) / wF;
+        const between = wB * wF * (mB - mF) * (mB - mF);
+        if (between > varMax) {
+          varMax = between;
+          threshold = t;
+        }
+      }
+      threshold = Math.max(70, Math.min(185, threshold));
+
+      // ESC/POS ラスタコマンドヘッダ (リトルエンディアン仕様整合)
+      const raster = new Uint8Array(8 + (WIDTH_BYTES * h));
+      raster.set([
+        0x1D, 0x76, 0x30, 0x00,
+        WIDTH_BYTES & 0xFF, (WIDTH_BYTES >> 8) & 0xFF,
+        h & 0xFF, (h >> 8) & 0xFF
+      ], 0);
+
+      let rasterIdx = 8;
+      for (let y = 0; y < h; y++) {
+        const row = y * WIDTH_PX;
+        for (let x = 0; x < WIDTH_BYTES; x++) {
+          let byte = 0;
+          const colBase = x * 8;
+          for (let b = 0; b < 8; b++) {
+            const px = colBase + b;
+            const idx = row + px;
+            const oldVal = gray[idx];
+            const isBlack = oldVal < threshold;
+            const newVal = isBlack ? 0 : 255;
+            const err = oldVal - newVal;
+
+            // Floyd-Steinberg 誤差拡散
+            if (px + 1 < WIDTH_PX) gray[idx + 1] += err * 0.4375;
+            if (y + 1 < h) {
+              const next = idx + WIDTH_PX;
+              if (px > 0) gray[next - 1] += err * 0.1875;
+              gray[next] += err * 0.3125;
+              if (px + 1 < WIDTH_PX) gray[next + 1] += err * 0.0625;
+            }
+
+            if (isBlack) byte |= (0x80 >> b);
+
+            const pIdx = idx * 4;
+            d[pIdx] = d[pIdx + 1] = d[pIdx + 2] = newVal;
+          }
+          raster[rasterIdx++] = byte;
+        }
+      }
+
+      ctx.putImageData(imgData, 0, 0);
+      cachedRaster = raster;
+      updateUI();
+    }
+
+    // =========================================================================
+    // 画像ソース読み込み & 安全なBlob管理
+    // =========================================================================
+    function loadImageSource(src, isBlob = false) {
+      if (isPrinting) return;
+      const currentToken = ++loadCounter;
+      setStatus('画像を読み込んでいます...');
+
+      const img = new Image();
+      img.crossOrigin = 'Anonymous';
+
+      img.onload = () => {
+        if (currentToken !== loadCounter) {
+          if (isBlob) URL.revokeObjectURL(src);
+          return;
+        }
+
+        // 新しい画像が確定してから古いBlobを安全に破棄
+        if (currentBlobUrl && currentBlobUrl !== src) {
+          URL.revokeObjectURL(currentBlobUrl);
+        }
+        currentBlobUrl = isBlob ? src : null;
+
+        sourceImage = img;
+        renderAndProcess();
+        setStatus('印刷準備完了');
+      };
+
+      img.onerror = () => {
+        if (currentToken !== loadCounter) return;
+        if (isBlob) URL.revokeObjectURL(src);
+
+        if (!isBlob && !src.startsWith('https://corsproxy.io/?')) {
+          loadImageSource('https://corsproxy.io/?' + encodeURIComponent(src), false);
+        } else {
+          setStatus('取得できませんでした。画像を直接貼り付けてください。');
+        }
+      };
+      img.src = src;
+    }
+
+    // =========================================================================
+    // Bluetooth 通信制御
+    // =========================================================================
+    const onDisconnected = () => {
+      writeChar = null;
+      isPrinting = false;
+      setStatus('プリンターが切断されました');
+      updateUI();
+    };
+
+    btnConnect.onclick = async () => {
+      try {
+        setStatus('プリンターを探しています...');
+        if (bleDevice) {
+          bleDevice.removeEventListener('gattserverdisconnected', onDisconnected);
+        }
+
+        bleDevice = await navigator.bluetooth.requestDevice({
+          acceptAllDevices: true,
+          optionalServices: [0xff00]
+        });
+
+        bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
+
+        const server = await bleDevice.gatt.connect();
+        const service = await server.getPrimaryService(0xff00);
+        writeChar = await service.getCharacteristic(0xff02);
+
+        const notifyChar = await service.getCharacteristic(0xff01);
+        await notifyChar.startNotifications();
+
+        setStatus('プリンターに接続しました');
+        updateUI();
+      } catch (err) {
+        setStatus(`接続キャンセル: ${err.message || err}`);
+      }
+    };
+
+    btnPrint.onclick = async () => {
+      if (!writeChar || !cachedRaster || isPrinting) return;
+      isPrinting = true;
+      updateUI();
+
+      try {
+        setStatus('印刷データを送信中...');
+
+        // 1. 有効化 & 濃度設定 (Dark)
+        await sendPacket(new Uint8Array([0x10, 0xFF, 0xF1, 0x03, 0x10, 0xFF, 0x10, 0x00, 0x02]));
+
+        // 2. ラスタビットマップ送信
+        await sendPacket(cachedRaster);
+
+        // 3. 2.0mm余白給紙 (16ドット) & 確定トリガー
+        await sendPacket(new Uint8Array([0x1B, 0x4A, FEED_DOTS, 0x10, 0xFF, 0xF1, 0x45]));
+
+        // 通電完了・モーター駆動待ち
+        await new Promise(r => setTimeout(r, 80));
+
+        setStatus('印刷が完了しました');
+      } catch (err) {
+        setStatus(`印刷エラー: ${err.message || err}`);
+      } finally {
+        isPrinting = false;
+        updateUI();
+      }
+    };
+
+    async function sendPacket(bytes) {
+      for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
+        if (!bleDevice?.gatt?.connected) throw new Error('通信が切断されました');
+        const chunk = bytes.subarray(i, i + CHUNK_SIZE);
+        if (writeChar.writeValueWithResponse) {
+          await writeChar.writeValueWithResponse(chunk);
+        } else {
+          await writeChar.writeValue(chunk);
+        }
+        await new Promise(r => setTimeout(r, CHUNK_DELAY));
+      }
+    }
+
+    // =========================================================================
+    // イベントリスナー
+    // =========================================================================
+    modeSelect.onchange = () => {
+      offsetControl.style.display = (modeSelect.value === 'fixed-crop') ? 'block' : 'none';
+      renderAndProcess();
+    };
+
+    offsetRange.oninput = () => {
+      const v = parseInt(offsetRange.value, 10);
+      offsetVal.textContent = (v === 0) ? '上寄り' : (v === 50) ? '中央' : (v === 100) ? '下寄り' : `${v}%`;
+      renderAndProcess();
+    };
+
+    btnLoadUrl.onclick = () => {
+      const url = urlInput.value.trim();
+      if (url) loadImageSource(url, false);
+    };
+
+    window.addEventListener('paste', (e) => {
+      if (isPrinting) return;
+      const item = Array.from(e.clipboardData.items).find(x => x.type.startsWith('image/'));
+      if (item) {
+        const file = item.getAsFile();
+        if (file) {
+          const blobUrl = URL.createObjectURL(file);
+          loadImageSource(blobUrl, true);
+        }
+      }
+    });
+
+    dropZone.onclick = () => { if (!isPrinting) fileInput.click(); };
+    fileInput.onchange = (e) => {
+      if (e.target.files[0]) {
+        const blobUrl = URL.createObjectURL(e.target.files[0]);
+        loadImageSource(blobUrl, true);
+        fileInput.value = '';
+      }
+    };
+
+    // ドラッグ＆ドロップ時のページ離脱抑止と安全な取得
+    const preventDrag = (e) => { e.preventDefault(); e.stopPropagation(); };
+    dropZone.ondragenter = preventDrag;
+    dropZone.ondragover = (e) => { preventDrag(e); dropZone.classList.add('dragover'); };
+    dropZone.ondragleave = (e) => { preventDrag(e); dropZone.classList.remove('dragover'); };
+    dropZone.ondrop = (e) => {
+      preventDrag(e);
+      dropZone.classList.remove('dragover');
+      if (!isPrinting && e.dataTransfer.files.length > 0) {
+        const file = e.dataTransfer.files[0];
+        if (!file.type || file.type.startsWith('image/')) {
+          const blobUrl = URL.createObjectURL(file);
+          loadImageSource(blobUrl, true);
+        }
+      }
+    };
+  </script>
+</body>
+</html>
