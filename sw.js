@@ -1,12 +1,12 @@
-const CACHE_NAME = 'pwa-printer-v1';
+const CACHE_NAME = 'printer-v4';
 const ASSETS = [
-  './',
-  './index.html',
-  './style.css',
-  './app.js',
-  './manifest.json',
-  './icon-192.png',
-  './icon-512.png'
+  '/pocket-printer/',
+  '/pocket-printer/index.html',
+  '/pocket-printer/style.css',
+  '/pocket-printer/app.js',
+  '/pocket-printer/manifest.json',
+  '/pocket-printer/icon-192.png',
+  '/pocket-printer/icon-512.png'
 ];
 
 self.addEventListener('install', (e) => {
@@ -25,7 +25,6 @@ self.addEventListener('activate', (e) => {
 });
 
 self.addEventListener('fetch', (e) => {
-  // GETリクエストに対して常にキャッシュ優先で返す（PWA適格性の必須条件）
   if (e.request.method === 'GET') {
     e.respondWith(
       caches.match(e.request).then((res) => res || fetch(e.request))
