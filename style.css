@@ -1,0 +1,147 @@
+:root {
+  --primary: #0d6efd;
+  --primary-hover: #0b5ed7;
+  --bg: #f8f9fa;
+  --card-bg: #ffffff;
+  --border: #dee2e6;
+  --text: #212529;
+  --subtext: #6c757d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  padding: 16px;
+  max-width: 420px;
+  margin: 0 auto;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.btn-group {
+  display: flex;
+  gap: 8px;
+}
+
+button {
+  flex: 1;
+  padding: 10px;
+  font-size: 14px;
+  cursor: pointer;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #ffffff;
+  color: var(--text);
+  font-weight: 500;
+  transition: background 0.15s ease-in-out;
+}
+
+button:active {
+  background: #e9ecef;
+}
+
+button.primary {
+  background: var(--primary);
+  color: #ffffff;
+  border-color: var(--primary);
+}
+
+button.primary:active {
+  background: var(--primary-hover);
+}
+
+button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.field-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  font-size: 14px;
+}
+
+.input-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+input[type="text"],
+select {
+  padding: 8px 10px;
+  font-size: 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+input[type="text"] {
+  flex: 1;
+  min-width: 0;
+}
+
+.help-text {
+  font-size: 11px;
+  color: var(--subtext);
+  line-height: 1.4;
+}
+
+#offsetControl {
+  display: none;
+  background: #f1f3f5;
+  padding: 10px 12px;
+  border-radius: 6px;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+
+#selectZone {
+  border: 2px dashed #adb5bd;
+  padding: 16px;
+  text-align: center;
+  color: var(--subtext);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  background: #fafafa;
+}
+
+#selectZone:active {
+  background: #e7f1ff;
+  border-color: var(--primary);
+}
+
+#previewCanvas {
+  border: 1px solid var(--border);
+  margin: 10px auto;
+  display: block;
+  width: 100%;
+  max-width: 384px;
+  height: auto;
+  background: #ffffff;
+  border-radius: 4px;
+}
+
+#status {
+  font-size: 12px;
+  color: var(--subtext);
+  text-align: center;
+  min-height: 18px;
+  margin-bottom: 16px;
+}
