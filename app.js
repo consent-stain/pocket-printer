@@ -1,12 +1,4 @@
-// PWAインストール適格性テストの診断ログ
-window.addEventListener('beforeinstallprompt', (e) => {
-  alert('【判定OK】ブラウザからインストール許可シグナルを受信しました！');
-});
-
-window.addEventListener('appinstalled', () => {
-  alert('【完了】アプリが正常にインストールされました');
-});
-// Service Worker 即時登録 (scopeを明示)
+// Service Worker 登録 (完全絶対パススコープ)
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/pocket-printer/sw.js', { scope: '/pocket-printer/' })
@@ -14,7 +6,6 @@ if ('serviceWorker' in navigator) {
       .catch((err) => console.warn('SW登録失敗:', err));
   });
 }
-
 
 // C50 サーマルプリンター規格定数 (LPC50_95A5 ESC/POS)
 const WIDTH_PX = 384;
