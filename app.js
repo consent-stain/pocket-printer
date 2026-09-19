@@ -1,3 +1,11 @@
+// PWAインストール適格性テストの診断ログ
+window.addEventListener('beforeinstallprompt', (e) => {
+  alert('【判定OK】ブラウザからインストール許可シグナルを受信しました！');
+});
+
+window.addEventListener('appinstalled', () => {
+  alert('【完了】アプリが正常にインストールされました');
+});
 // Service Worker 即時登録 (scopeを明示)
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js', { scope: './' })
