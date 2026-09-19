@@ -8,10 +8,13 @@ window.addEventListener('appinstalled', () => {
 });
 // Service Worker 即時登録 (scopeを明示)
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js', { scope: './' })
-    .then((reg) => console.log('SW登録完了:', reg.scope))
-    .catch((err) => console.warn('SW登録失敗:', err));
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/pocket-printer/sw.js', { scope: '/pocket-printer/' })
+      .then((reg) => console.log('SW登録完了:', reg.scope))
+      .catch((err) => console.warn('SW登録失敗:', err));
+  });
 }
+
 
 // C50 サーマルプリンター規格定数 (LPC50_95A5 ESC/POS)
 const WIDTH_PX = 384;
