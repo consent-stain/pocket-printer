@@ -1,7 +1,7 @@
-// Service Worker 登録 (完全絶対パススコープ)
+// Service Worker 即時登録 (SVGOMG仕様準拠: 相対パス登録)
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/pocket-printer/sw.js', { scope: '/pocket-printer/' })
+    navigator.serviceWorker.register('sw.js')
       .then((reg) => console.log('SW登録完了:', reg.scope))
       .catch((err) => console.warn('SW登録失敗:', err));
   });
@@ -326,7 +326,7 @@ async function sendPacket(bytes) {
 }
 
 // =============================================================================
-// イベントリスナー & PWA共有受け取り
+// イベントリスナー
 // =============================================================================
 modeSelect.onchange = () => {
   offsetControl.style.display = (modeSelect.value === 'fixed-crop') ? 'block' : 'none';
@@ -350,22 +350,3 @@ fileInput.onchange = (e) => {
     fileInput.value = '';
   }
 };
-
-// Android 共有ターゲット (Web Share Target) 受信処理
-window.addEventListener('DOMContentLoaded', async () => {
-  const params = new URLSearchParams(window.location.search);
-  if (params.get('from_share') === '1') {
-    try {
-      const cache = await caches.open('shared-image');
-      const res = await cache.match('incoming-image');
-      if (res) {
-        const blob = await res.blob();
-        await loadImageSource(URL.createObjectURL(blob), true);
-        await cache.delete('incoming-image');
-        window.history.replaceState({}, '', window.location.pathname);
-      }
-    } catch (err) {
-      console.warn('Share target 受信処理エラー:', err);
-    }
-  }
-});

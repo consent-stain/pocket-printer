@@ -1,12 +1,12 @@
-const CACHE_NAME = 'printer-v5-fixed';
+const CACHE_NAME = 'pocket-printer-clean-v1';
 const ASSETS = [
-  '/pocket-printer/',
-  '/pocket-printer/index.html',
-  '/pocket-printer/style.css',
-  '/pocket-printer/app.js',
-  '/pocket-printer/manifest.json',
-  '/pocket-printer/icon-192.png',
-  '/pocket-printer/icon-512.png'
+  './',
+  'index.html',
+  'style.css',
+  'app.js',
+  'manifest.json',
+  'icon-192.png',
+  'icon-512.png'
 ];
 
 self.addEventListener('install', (e) => {
@@ -27,15 +27,7 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   if (e.request.method === 'GET') {
     e.respondWith(
-      caches.match(e.request).then((res) => {
-        if (res) return res;
-        return fetch(e.request).then((networkRes) => {
-          if (networkRes && networkRes.status === 200) {
-            caches.open(CACHE_NAME).then((c) => c.put(e.request, networkRes.clone()));
-          }
-          return networkRes;
-        }).catch(() => caches.match('/pocket-printer/index.html'));
-      })
+      caches.match(e.request).then((res) => res || fetch(e.request))
     );
   }
 });
