@@ -1,3 +1,32 @@
+// Manifestとアイコンの検証ログ
+(async () => {
+  const link = document.querySelector('link[rel="manifest"]');
+  if (!link) {
+    addDiag('エラー: manifest linkタグがありません');
+    return;
+  }
+  try {
+    const res = await fetch(link.href);
+    if (!res.ok) {
+      addDiag(`Manifest取得失敗: HTTP ${res.status}`);
+      return;
+    }
+    const json = await res.json();
+    addDiag(`Manifest読込OK: ${json.short_name || json.name}`);
+    
+    // アイコンの取得チェック
+    if (json.icons && json.icons.length > 0) {
+      const iconUrl = json.icons[0].src;
+      const imgRes = await fetch(iconUrl);
+      addDiag(`アイコン取得: HTTP ${imgRes.status}`);
+    } else {
+      addDiag('エラー: iconsが未定義です');
+    }
+  } catch (e) {
+    addDiag(`Manifestエラー: ${e.message}`);
+  }
+})();
+
 // 状態表示ログ
 function addDiag(msg) {
   const el = document.getElementById('diagBar');
