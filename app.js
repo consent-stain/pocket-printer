@@ -7,7 +7,7 @@ function addDiag(msg) {
   }
 }
 
-// Service Worker 登録（GitHub Pages絶対パスでスコープ固定）
+// Service Worker 登録（絶対パス）
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/pocket-printer/sw.js', { scope: '/pocket-printer/' })
@@ -18,10 +18,10 @@ if ('serviceWorker' in navigator) {
 
 // C50 サーマルプリンター規格定数 (LPC50_95A5 ESC/POS)
 const WIDTH_PX = 384;
-const WIDTH_BYTES = 48;
-const CHUNK_SIZE = 128;
-const CHUNK_DELAY = 12;
-const FEED_DOTS = 16;
+const WIDTH_BYTES = 48; // 384 / 8
+const CHUNK_SIZE = 128; // BLE パケットサイズ
+const CHUNK_DELAY = 12; // パケット間ウェイト (ms)
+const FEED_DOTS = 16;   // 2.0mm余白 (8 dot/mm * 2.0mm)
 
 // DOM要素
 const statusEl = document.getElementById('status');
@@ -65,7 +65,7 @@ const updateUI = () => {
 window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
   deferredPrompt = e;
-  addDiag('インストール資格を確認しました。ボタンをタップしてインストールできます。');
+  addDiag('インストール資格OK！ボタンを表示しました');
   if (btnInstall) {
     btnInstall.style.display = 'inline-block';
   }
@@ -84,11 +84,11 @@ if (btnInstall) {
 
 window.addEventListener('appinstalled', () => {
   if (btnInstall) btnInstall.style.display = 'none';
-  addDiag('PWAアプリとして正常にインストールされました');
+  addDiag('アプリをインストールしました');
 });
 
 // =============================================================================
-// Web Share Target（共有機能）からの受け取り処理
+// Web Share Target（共有受け取り）
 // =============================================================================
 async function checkSharedImage() {
   const params = new URLSearchParams(window.location.search);
@@ -216,6 +216,7 @@ function renderAndProcess() {
   }
   threshold = Math.max(70, Math.min(185, threshold));
 
+  // ESC/POS GS v 0 ヘッダー
   const raster = new Uint8Array(8 + (WIDTH_BYTES * h));
   raster.set([
     0x1D, 0x76, 0x30, 0x00,
@@ -249,7 +250,7 @@ function renderAndProcess() {
 
         const pIdx = idx * 4;
         d[pIdx] = d[pIdx + 1] = d[pIdx + 2] = newVal;
-        d[pIdx + 3] = 255; // 透過PNGの白飛びバグ防止
+        d[pIdx + 3] = 255; // 透過PNGの描画バグ防止
       }
       raster[rasterIdx++] = byte;
     }
@@ -289,17 +290,18 @@ function loadImageSource(src, isBlob = false) {
       if (currentToken !== loadCounter) {
         if (isBlob) URL.revokeObjectURL(src);
         resolve();
+        return;
+      }
+
+      if (!isBlob && !src.startsWith('data:') && !src.startsWith('https://corsproxy.io/?')) {
+        loadImageSource('https://corsproxy.io/?' + encodeURIComponent(src), false)
+          .then(resolve)
+          .catch(reject);
       } else {
-        if (!isBlob && !src.startsWith('data:') && !src.startsWith('https://corsproxy.io/?')) {
-          loadImageSource('https://corsproxy.io/?' + encodeURIComponent(src), false)
-            .then(resolve)
-            .catch(reject);
-        } else {
-          if (isBlob) URL.revokeObjectURL(src);
-          setStatus('画像の取得に失敗しました。端末内のファイル選択をお使いください。');
-          updateUI();
-          reject(new Error('Load failed'));
-        }
+        if (isBlob) URL.revokeObjectURL(src);
+        setStatus('画像の取得に失敗しました。端末内のファイル選択をお使いください。');
+        updateUI();
+        reject(new Error('Load failed'));
       }
     };
 
