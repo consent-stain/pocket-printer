@@ -155,5 +155,16 @@ input[type="text"] {
   color: var(--subtext);
   text-align: center;
   min-height: 18px;
-  margin-bottom: 16px;
+  margin-bottom: 10px;
+}
+
+.diag-box {
+  font-size: 11px;
+  color: #495057;
+  background: #e9ecef;
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-top: 8px;
+  font-family: monospace;
+  line-height: 1.5;
 }

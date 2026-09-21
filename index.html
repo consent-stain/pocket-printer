@@ -5,14 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#0d6efd">
   <title>ポケットプリンター</title>
-  <link rel="manifest" href="manifest.json">
-  <link rel="icon" href="icon-192.png" type="image/png">
-  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="manifest" href="/pocket-printer/manifest.json">
+  <link rel="icon" href="/pocket-printer/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="/pocket-printer/icon-192.png">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-  <!-- 通信制御・PWAインストールボタン -->
+  <!-- 通信制御・PWAインストール -->
   <div class="card">
     <div class="btn-group">
       <button id="btnInstall" type="button" class="btn-install" style="display: none;">アプリをインストール</button>
@@ -63,6 +63,9 @@
   <!-- プレビュー -->
   <canvas id="previewCanvas" width="384" height="120"></canvas>
   <div id="status">プリンターに接続してください</div>
+
+  <!-- PWA・通信状態デバッグバー -->
+  <div id="diagBar" class="diag-box"></div>
 
   <script src="app.js"></script>
 </body>
