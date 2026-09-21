@@ -1,99 +1,69 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#1976d2" />
-  <title>C50 Pocket Printer</title>
-
-  <!-- PWA & Mobile Meta Tags -->
-  <link rel="manifest" href="./manifest.json" />
-  <link rel="apple-touch-icon" href="./icons/icon-192.png" />
-  <meta name="mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-
-  <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      margin: 0;
-      padding: 1rem;
-      background: #f8f9fa;
-      color: #333;
-    }
-    .card {
-      background: #fff;
-      border-radius: 12px;
-      padding: 1.25rem;
-      margin-bottom: 1rem;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.08);
-    }
-    button {
-      background: #1976d2;
-      color: #fff;
-      border: none;
-      padding: 0.75rem 1.25rem;
-      border-radius: 8px;
-      font-size: 1rem;
-      cursor: pointer;
-      width: 100%;
-      margin-top: 0.5rem;
-      box-sizing: border-box;
-    }
-    button:disabled {
-      background: #ccc;
-      cursor: not-allowed;
-    }
-    #install-btn {
-      background: #2e7d32;
-      display: none;
-      margin-bottom: 1rem;
-      font-weight: bold;
-    }
-    textarea {
-      width: 100%;
-      box-sizing: border-box;
-      height: 100px;
-      margin-top: 0.5rem;
-      padding: 0.5rem;
-      border: 1px solid #ccc;
-      border-radius: 6px;
-      font-size: 1rem;
-    }
-    .status {
-      font-weight: bold;
-      margin-top: 0.75rem;
-      font-size: 0.95rem;
-    }
-    h2 {
-      margin-top: 0;
-      font-size: 1.15rem;
-    }
-    p {
-      color: #666;
-      font-size: 0.9rem;
-      margin: 0.25rem 0 0.5rem;
-    }
-  </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0d6efd">
+  <title>ポケットプリンター</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-  <!-- PWA インストールボタン -->
-  <button id="install-btn">📲 アプリをインストールする</button>
-
+  <!-- 通信制御・PWAインストール -->
   <div class="card">
-    <h2>1. プリンター接続</h2>
-    <p>C50 プリンターの電源を入れ、Bluetooth でペアリングします。</p>
-    <button id="connect-btn">プリンターに接続</button>
-    <div class="status" id="connection-status">未接続</div>
+    <div class="btn-group">
+      <button id="btnInstall" type="button" class="btn-install" style="display: none;">アプリをインストール</button>
+      <button id="btnConnect" type="button">プリンター接続</button>
+      <button id="btnPrint" type="button" class="primary" disabled>印刷開始</button>
+    </div>
   </div>
 
+  <!-- 画像URL入力 -->
   <div class="card">
-    <h2>2. テキスト印刷</h2>
-    <textarea id="print-text" placeholder="印刷するテキストを入力してください...">Hello C50 Pocket Printer!</textarea>
-    <button id="print-btn" disabled>テスト印刷</button>
+    <div class="field-row">
+      <span style="font-weight: bold;">画像URLから取得</span>
+    </div>
+    <div class="input-row">
+      <input type="text" id="urlInput" placeholder="画像のアドレスを入力または長押しペースト">
+      <button id="btnLoadUrl" type="button" class="primary" style="flex: none; width: 64px;">読込</button>
+    </div>
+    <div class="help-text">
+      ※Web上の画像アドレスやBase64（data:image/...）形式に対応しています。
+    </div>
   </div>
 
-  <script src="./app.js"></script>
+  <!-- 印刷設定・ファイル選択 -->
+  <div class="card">
+    <div class="field-row">
+      <span>印刷サイズ</span>
+      <select id="modeSelect">
+        <option value="free" selected>用紙幅に合わせる (自動)</option>
+        <option value="fixed-fit">5×3 cm (縮小して全体印刷)</option>
+        <option value="fixed-crop">5×3 cm (用紙幅に合わせて上下調整)</option>
+      </select>
+    </div>
+
+    <div id="offsetControl">
+      <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+        <span>印刷範囲の上下調整</span>
+        <span id="offsetVal">中央</span>
+      </div>
+      <input type="range" id="offsetRange" min="0" max="100" value="50" style="width: 100%;">
+    </div>
+
+    <div id="selectZone">
+      端末内の画像ファイルを選択
+      <input type="file" id="fileInput" accept="image/*" style="display: none;">
+    </div>
+  </div>
+
+  <!-- プレビュー -->
+  <canvas id="previewCanvas" width="384" height="120"></canvas>
+  <div id="status">プリンターに接続してください</div>
+
+  <script src="app.js"></script>
 </body>
 </html>
