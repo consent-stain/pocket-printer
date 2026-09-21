@@ -1,52 +1,45 @@
 {
   "name": "ポケットプリンター",
   "short_name": "プリンター",
-  "id": "pocket-printer-app",
-  "start_url": "index.html",
-  "scope": "./",
+  "id": "/pocket-printer/",
+  "start_url": "/pocket-printer/",
+  "scope": "/pocket-printer/",
   "display": "standalone",
   "background_color": "#f8f9fa",
   "theme_color": "#0d6efd",
   "icons": [
     {
-      "src": "icon-192.png",
+      "src": "/pocket-printer/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "icon-192.png",
+      "src": "/pocket-printer/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "maskable"
     },
     {
-      "src": "icon-512.png",
+      "src": "/pocket-printer/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "icon-512.png",
+      "src": "/pocket-printer/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
     }
   ],
   "share_target": {
-    "action": "index.html",
-    "method": "POST",
-    "enctype": "multipart/form-data",
+    "action": "/pocket-printer/",
+    "method": "GET",
     "params": {
       "title": "title",
       "text": "text",
-      "url": "url",
-      "files": [
-        {
-          "name": "image",
-          "accept": ["image/*"]
-        }
-      ]
+      "url": "url"
     }
   }
 }

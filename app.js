@@ -1,12 +1,3 @@
-// Service Worker 登録
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js?v=18')
-      .then((reg) => console.log('SW登録OK:', reg.scope))
-      .catch((err) => console.warn('SW登録失敗:', err));
-  });
-}
-
 // C50 サーマルプリンター規格定数 (LPC50_95A5 ESC/POS)
 const WIDTH_PX = 384;
 const WIDTH_BYTES = 48;
@@ -14,14 +5,12 @@ const CHUNK_SIZE = 128;
 const CHUNK_DELAY = 12;
 const FEED_DOTS = 16;
 
-// DOM要素
 const statusEl = document.getElementById('status');
 const canvas = document.getElementById('previewCanvas');
 const ctx = canvas.getContext('2d', { willReadFrequently: true });
 const btnConnect = document.getElementById('btnConnect');
 const btnPrint = document.getElementById('btnPrint');
 const btnInstall = document.getElementById('btnInstall');
-const btnClearCache = document.getElementById('btnClearCache');
 const modeSelect = document.getElementById('modeSelect');
 const offsetControl = document.getElementById('offsetControl');
 const offsetRange = document.getElementById('offsetRange');
@@ -52,24 +41,6 @@ const updateUI = () => {
 };
 
 // =============================================================================
-// キャッシュ・Service Worker完全初期化（手動強制リフレッシュ）
-// =============================================================================
-if (btnClearCache) {
-  btnClearCache.addEventListener('click', async () => {
-    if ('serviceWorker' in navigator) {
-      const regs = await navigator.serviceWorker.getRegistrations();
-      for (const r of regs) await r.unregister();
-    }
-    if ('caches' in window) {
-      const keys = await caches.keys();
-      for (const k of keys) await caches.delete(k);
-    }
-    alert('キャッシュとSWを完全に消去しました。最新状態で再読込します。');
-    window.location.reload(true);
-  });
-}
-
-// =============================================================================
 // PWA インストールプロンプト制御
 // =============================================================================
 window.addEventListener('beforeinstallprompt', (e) => {
@@ -93,32 +64,41 @@ window.addEventListener('appinstalled', () => {
 });
 
 // =============================================================================
-// Web Share Target（共有受け取り：画像ファイル / Google画像検索URL両対応）
+// Web Share Target（共有受け取り：POST一時キャッシュ & GETクエリ両対応）
 // =============================================================================
 async function checkSharedData() {
   const params = new URLSearchParams(window.location.search);
+  
+  // 1. GETクエリによる共有（URL / テキスト）
+  const sharedUrl = params.get('url') || params.get('text');
+  if (sharedUrl) {
+    const target = extractTargetUrl(sharedUrl);
+    if (target) {
+      urlInput.value = target;
+      loadImageSource(target, false);
+    }
+    window.history.replaceState({}, '', window.location.pathname);
+    return;
+  }
+
+  // 2. POSTによる共有一時バッファ（ファイル）
   if (params.get('from_share') === '1') {
     try {
       const cache = await caches.open('shared-image');
-      
-      // 1. ファイル受取チェック
       const fileRes = await cache.match('incoming-image');
       if (fileRes) {
         const blob = await fileRes.blob();
         loadImageSource(URL.createObjectURL(blob), true);
         await cache.delete('incoming-image');
       } else {
-        // 2. テキスト/URL受取チェック (Google画像検索など)
         const urlRes = await cache.match('incoming-url');
         if (urlRes) {
-          const sharedUrl = await urlRes.text();
+          const textData = await urlRes.text();
           await cache.delete('incoming-url');
-          const target = extractTargetUrl(sharedUrl);
+          const target = extractTargetUrl(textData);
           if (target) {
             urlInput.value = target;
             loadImageSource(target, false);
-          } else {
-            setStatus('共有されたURLから画像を特定できませんでした');
           }
         }
       }
@@ -136,7 +116,7 @@ if (document.readyState === 'loading') {
 }
 
 // =============================================================================
-// 画像URL解析・入力ハンドリング（Google画像検索URL完全対応）
+// 画像URL解析・入力ハンドリング
 // =============================================================================
 function extractTargetUrl(input) {
   const text = input ? input.trim() : '';

@@ -1,12 +1,12 @@
-const CACHE_NAME = 'pocket-printer-v18';
+const CACHE_NAME = 'pocket-printer-v19';
 const ASSETS = [
-  './',
-  'index.html',
-  'style.css',
-  'app.js',
-  'manifest.json',
-  'icon-192.png',
-  'icon-512.png'
+  '/pocket-printer/',
+  '/pocket-printer/index.html',
+  '/pocket-printer/style.css',
+  '/pocket-printer/app.js',
+  '/pocket-printer/manifest.json',
+  '/pocket-printer/icon-192.png',
+  '/pocket-printer/icon-512.png'
 ];
 
 self.addEventListener('install', (e) => {
@@ -28,30 +28,6 @@ self.addEventListener('activate', (e) => {
 });
 
 self.addEventListener('fetch', (e) => {
-  if (e.request.method === 'POST') {
-    e.respondWith((async () => {
-      try {
-        const formData = await e.request.formData();
-        const file = formData.get('image');
-        const text = formData.get('text');
-        const url = formData.get('url');
-
-        const cache = await caches.open('shared-image');
-
-        if (file && file.size > 0) {
-          await cache.put('incoming-image', new Response(file));
-        } else if (url || text) {
-          const targetUrl = url || text;
-          await cache.put('incoming-url', new Response(targetUrl));
-        }
-      } catch (err) {
-        console.error('POST共有受付エラー:', err);
-      }
-      return Response.redirect('index.html?from_share=1', 303);
-    })());
-    return;
-  }
-
   if (e.request.method === 'GET') {
     e.respondWith(
       caches.match(e.request, { ignoreSearch: true }).then((res) => res || fetch(e.request))
