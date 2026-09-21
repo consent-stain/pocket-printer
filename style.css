@@ -64,6 +64,20 @@ button.btn-install {
 
 button.btn-install:active { background: var(--success-hover); }
 
+.btn-clear-cache {
+  flex: none;
+  padding: 6px 12px;
+  font-size: 12px;
+  background: #6c757d;
+  color: #ffffff;
+  border: 1px solid #6c757d;
+  border-radius: 4px;
+}
+
+.btn-clear-cache:active {
+  background: #565e64;
+}
+
 button:disabled {
   opacity: 0.35;
   cursor: not-allowed;

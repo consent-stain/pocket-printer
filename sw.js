@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pocket-printer-v17';
+const CACHE_NAME = 'pocket-printer-v18';
 const ASSETS = [
   './',
   'index.html',
@@ -28,7 +28,6 @@ self.addEventListener('activate', (e) => {
 });
 
 self.addEventListener('fetch', (e) => {
-  // Web Share Target からのPOST受付
   if (e.request.method === 'POST') {
     e.respondWith((async () => {
       try {
@@ -40,10 +39,8 @@ self.addEventListener('fetch', (e) => {
         const cache = await caches.open('shared-image');
 
         if (file && file.size > 0) {
-          // 画像ファイルが共有された場合
           await cache.put('incoming-image', new Response(file));
         } else if (url || text) {
-          // URLまたはテキスト（Google画像検索など）が共有された場合
           const targetUrl = url || text;
           await cache.put('incoming-url', new Response(targetUrl));
         }
@@ -55,7 +52,6 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // GETリクエスト（キャッシュ優先）
   if (e.request.method === 'GET') {
     e.respondWith(
       caches.match(e.request, { ignoreSearch: true }).then((res) => res || fetch(e.request))

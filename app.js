@@ -1,7 +1,7 @@
 // Service Worker 登録
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js?v=17')
+    navigator.serviceWorker.register('sw.js?v=18')
       .then((reg) => console.log('SW登録OK:', reg.scope))
       .catch((err) => console.warn('SW登録失敗:', err));
   });
@@ -9,10 +9,10 @@ if ('serviceWorker' in navigator) {
 
 // C50 サーマルプリンター規格定数 (LPC50_95A5 ESC/POS)
 const WIDTH_PX = 384;
-const WIDTH_BYTES = 48; // 384 / 8
-const CHUNK_SIZE = 128; // BLE パケットサイズ
-const CHUNK_DELAY = 12; // パケット間ウェイト (ms)
-const FEED_DOTS = 16;   // 2.0mm余白 (8 dot/mm * 2.0mm)
+const WIDTH_BYTES = 48;
+const CHUNK_SIZE = 128;
+const CHUNK_DELAY = 12;
+const FEED_DOTS = 16;
 
 // DOM要素
 const statusEl = document.getElementById('status');
@@ -21,6 +21,7 @@ const ctx = canvas.getContext('2d', { willReadFrequently: true });
 const btnConnect = document.getElementById('btnConnect');
 const btnPrint = document.getElementById('btnPrint');
 const btnInstall = document.getElementById('btnInstall');
+const btnClearCache = document.getElementById('btnClearCache');
 const modeSelect = document.getElementById('modeSelect');
 const offsetControl = document.getElementById('offsetControl');
 const offsetRange = document.getElementById('offsetRange');
@@ -51,7 +52,48 @@ const updateUI = () => {
 };
 
 // =============================================================================
-// Web Share Target（共有受け取り：ファイル・URL両対応）
+// キャッシュ・Service Worker完全初期化（手動強制リフレッシュ）
+// =============================================================================
+if (btnClearCache) {
+  btnClearCache.addEventListener('click', async () => {
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      for (const r of regs) await r.unregister();
+    }
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      for (const k of keys) await caches.delete(k);
+    }
+    alert('キャッシュとSWを完全に消去しました。最新状態で再読込します。');
+    window.location.reload(true);
+  });
+}
+
+// =============================================================================
+// PWA インストールプロンプト制御
+// =============================================================================
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredPrompt = e;
+  if (btnInstall) btnInstall.style.display = 'inline-block';
+});
+
+if (btnInstall) {
+  btnInstall.addEventListener('click', async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    deferredPrompt = null;
+    btnInstall.style.display = 'none';
+  });
+}
+
+window.addEventListener('appinstalled', () => {
+  if (btnInstall) btnInstall.style.display = 'none';
+});
+
+// =============================================================================
+// Web Share Target（共有受け取り：画像ファイル / Google画像検索URL両対応）
 // =============================================================================
 async function checkSharedData() {
   const params = new URLSearchParams(window.location.search);
@@ -101,13 +143,11 @@ function extractTargetUrl(input) {
   if (!text) return null;
   if (text.startsWith('data:image/')) return text;
 
-  // テキスト中にURLが含まれている場合の抽出
   const match = text.match(/https?:\/\/[^\s]+/);
   const rawUrl = match ? match[0] : text;
 
   try {
     const parsed = new URL(rawUrl);
-    // Google画像検索のimgurlパラメータ
     if (parsed.searchParams.has('imgurl')) {
       const decoded = decodeURIComponent(parsed.searchParams.get('imgurl'));
       return decoded.startsWith('http') ? decoded : null;
@@ -233,7 +273,7 @@ function renderAndProcess() {
 
         const pIdx = idx * 4;
         d[pIdx] = d[pIdx + 1] = d[pIdx + 2] = newVal;
-        d[pIdx + 3] = 255; // 透過PNG対策
+        d[pIdx + 3] = 255;
       }
       raster[rasterIdx++] = byte;
     }
@@ -273,18 +313,17 @@ function loadImageSource(src, isBlob = false) {
       if (currentToken !== loadCounter) {
         if (isBlob) URL.revokeObjectURL(src);
         resolve();
-        return;
-      }
-
-      if (!isBlob && !src.startsWith('data:') && !src.startsWith('https://corsproxy.io/?')) {
-        loadImageSource('https://corsproxy.io/?' + encodeURIComponent(src), false)
-          .then(resolve)
-          .catch(reject);
       } else {
-        if (isBlob) URL.revokeObjectURL(src);
-        setStatus('画像の取得に失敗しました。端末内のファイル選択をお使いください。');
-        updateUI();
-        reject(new Error('Load failed'));
+        if (!isBlob && !src.startsWith('data:') && !src.startsWith('https://corsproxy.io/?')) {
+          loadImageSource('https://corsproxy.io/?' + encodeURIComponent(src), false)
+            .then(resolve)
+            .catch(reject);
+        } else {
+          if (isBlob) URL.revokeObjectURL(src);
+          setStatus('画像の取得に失敗しました。端末内のファイル選択をお使いください。');
+          updateUI();
+          reject(new Error('Load failed'));
+        }
       }
     };
 
