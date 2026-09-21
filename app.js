@@ -64,7 +64,7 @@ window.addEventListener('appinstalled', () => {
 });
 
 // =============================================================================
-// Web Share Target（共有受け取り：画像ファイル / Google画像検索URL両対応）
+// Web Share Target（共有受け取り：POST一時キャッシュ）
 // =============================================================================
 async function checkSharedData() {
   const params = new URLSearchParams(window.location.search);
@@ -72,25 +72,17 @@ async function checkSharedData() {
     try {
       const cache = await caches.open('shared-image');
       
-      // 1. 画像ファイル受取
       const fileRes = await cache.match('incoming-image');
       if (fileRes) {
         const blob = await fileRes.blob();
         loadImageSource(URL.createObjectURL(blob), true);
         await cache.delete('incoming-image');
       } else {
-        // 2. Google画像検索などのURL/テキスト受取
         const urlRes = await cache.match('incoming-url');
         if (urlRes) {
           const rawShared = await urlRes.text();
           await cache.delete('incoming-url');
-          const target = extractTargetUrl(rawShared);
-          if (target) {
-            urlInput.value = target;
-            loadImageSource(target, false);
-          } else {
-            setStatus('共有データから画像URLを検出できませんでした');
-          }
+          processIncomingShareText(rawShared);
         }
       }
       window.history.replaceState({}, '', window.location.pathname);
@@ -106,8 +98,51 @@ if (document.readyState === 'loading') {
   checkSharedData();
 }
 
+async function processIncomingShareText(text) {
+  const rawUrl = extractTargetUrl(text);
+  if (!rawUrl) {
+    setStatus('共有データからURLを検出できませんでした');
+    return;
+  }
+
+  urlInput.value = rawUrl;
+
+  if (rawUrl.includes('share.google') || rawUrl.includes('google.com/url')) {
+    setStatus('Googleリンクを解析中...');
+    try {
+      const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(rawUrl);
+      const res = await fetch(proxyUrl);
+      const html = await res.text();
+      
+      const ogMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
+                      html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i) ||
+                      html.match(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i);
+      
+      if (ogMatch && ogMatch[1]) {
+        let extracted = ogMatch[1].replace(/&amp;/g, '&');
+        if (extracted.startsWith('//')) extracted = 'https:' + extracted;
+        urlInput.value = extracted;
+        loadImageSource(extracted, false);
+        return;
+      }
+
+      const imgurlMatch = html.match(/imgurl=([^&"'>]+)/);
+      if (imgurlMatch && imgurlMatch[1]) {
+        const decoded = decodeURIComponent(imgurlMatch[1]);
+        urlInput.value = decoded;
+        loadImageSource(decoded, false);
+        return;
+      }
+    } catch (e) {
+      console.warn('リンク先HTML解析エラー:', e);
+    }
+  }
+
+  loadImageSource(rawUrl, false);
+}
+
 // =============================================================================
-// 画像URL解析・入力ハンドリング（Google画像検索URL完全対応）
+// 画像URL解析・入力ハンドリング
 // =============================================================================
 function extractTargetUrl(input) {
   const text = input ? input.trim() : '';
@@ -133,12 +168,7 @@ function extractTargetUrl(input) {
 }
 
 function handleUrlLoad() {
-  const target = extractTargetUrl(urlInput.value);
-  if (!target) {
-    setStatus('有効な画像URLを入力してください');
-    return;
-  }
-  loadImageSource(target, false);
+  processIncomingShareText(urlInput.value);
 }
 
 btnLoadUrl.onclick = handleUrlLoad;
