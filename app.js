@@ -11,7 +11,6 @@ const ctx = canvas.getContext('2d', { willReadFrequently: true });
 const btnConnect = document.getElementById('btnConnect');
 const btnPrint = document.getElementById('btnPrint');
 const pasteZone = document.getElementById('pasteZone');
-const pasteHint = document.getElementById('pasteHint');
 const modeSelect = document.getElementById('modeSelect');
 const offsetControl = document.getElementById('offsetControl');
 const offsetRange = document.getElementById('offsetRange');
@@ -38,14 +37,13 @@ const updateUI = () => {
 };
 
 // =============================================================================
-// ペースト処理（画像バイナリ / 画像アドレス両対応 & 多重フォールバック）
+// 画像バイナリのペースト処理（Webサイトからの「画像をコピー」専用）
 // =============================================================================
-pasteZone.addEventListener('paste', async (e) => {
+pasteZone.addEventListener('paste', (e) => {
   e.preventDefault();
   const clipboard = e.clipboardData;
   if (!clipboard) return;
 
-  // 1. 画像バイナリ（「画像をコピー」）
   const items = clipboard.items;
   if (items) {
     for (let i = 0; i < items.length; i++) {
@@ -60,95 +58,90 @@ pasteZone.addEventListener('paste', async (e) => {
     }
   }
 
-  // 2. HTML形式貼り付け内の <img> タグ検索
   const htmlData = clipboard.getData('text/html');
   if (htmlData) {
-    const imgMatch = htmlData.match(/<img[^>]+src=["']([^"']+)["']/i);
-    if (imgMatch && imgMatch[1]) {
-      const src = imgMatch[1].replace(/&amp;/g, '&');
-      pasteZone.textContent = src;
-      loadImageSource(src, false);
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(htmlData, 'text/html');
+    const imgEl = doc.querySelector('img');
+    if (imgEl && imgEl.src && imgEl.src.startsWith('data:image/')) {
+      pasteZone.textContent = '【画像を貼り付けました】';
+      loadImageSource(imgEl.src, false);
       return;
     }
   }
 
-  // 3. テキスト・URL（「画像アドレスをコピー」など）
-  const rawText = clipboard.getData('text');
-  if (rawText) {
-    pasteZone.textContent = rawText.trim();
-    const cleanUrl = extractTargetUrl(rawText);
-    if (cleanUrl) {
-      loadImageSource(cleanUrl, false);
-    } else {
-      setStatus('貼り付けられたテキストから画像アドレスを認識できませんでした');
-    }
-  }
+  setStatus('クリップボードに画像が見つかりませんでした。「画像をコピー」してから貼り付けてください。');
 });
 
-// URL抽出ロジック（Google画像検索パラメータ、改行混入、Base64等に完全対応）
-function extractTargetUrl(input) {
-  if (!input) return null;
-  const text = input.trim();
-  if (text.startsWith('data:image/')) return text;
-
-  // テキスト内から URL (http/https) を検出
-  const match = text.match(/https?:\/\/[^\s"'>]+/);
-  const rawUrl = match ? match[0] : text;
-
-  try {
-    const parsed = new URL(rawUrl);
-    // Google画像検索等の imgurl パラメータを優先
-    if (parsed.searchParams.has('imgurl')) {
-      const decoded = decodeURIComponent(parsed.searchParams.get('imgurl'));
-      if (decoded.startsWith('http')) return decoded;
-    }
-    // 一般的な画像拡張子、または画像配信URL
-    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-      return rawUrl;
-    }
-    return null;
-  } catch (_) {
-    return null;
-  }
-}
-
 // =============================================================================
-// 画像変換 (リサイズ + 大津2値化 + FS誤差拡散 + ESC/POSパッキング)
+// 画像変換 (リサイズ + 左右反転 + 大津2値化 + FS誤差拡散 + ESC/POSパッキング)
 // =============================================================================
 function renderAndProcess() {
   if (!sourceImage) return;
 
   const mode = modeSelect.value;
-  const hFixed = 230;
-  const h = (mode === 'free')
-    ? Math.max(1, Math.round(sourceImage.height * (WIDTH_PX / sourceImage.width)))
-    : hFixed;
-
-  canvas.width = WIDTH_PX;
-  canvas.height = h;
-
-  ctx.fillStyle = '#FFFFFF';
-  ctx.fillRect(0, 0, WIDTH_PX, h);
+  let targetH = 120;
+  const boxW_4x6 = 307; // 幅4cm
+  const boxH_4x6 = 461; // 高さ6cm
 
   if (mode === 'free') {
-    ctx.drawImage(sourceImage, 0, 0, WIDTH_PX, h);
-  } else if (mode === 'fixed-fit') {
-    const scale = Math.min(WIDTH_PX / sourceImage.width, h / sourceImage.height);
-    const dw = Math.round(sourceImage.width * scale);
-    const dh = Math.round(sourceImage.height * scale);
-    ctx.drawImage(sourceImage, Math.round((WIDTH_PX - dw) / 2), Math.round((h - dh) / 2), dw, dh);
-  } else {
-    const scale = WIDTH_PX / sourceImage.width;
-    const dh = Math.round(sourceImage.height * scale);
-    const overflow = dh - h;
-    const offset = parseInt(offsetRange.value, 10) / 100;
-    const dy = overflow > 0 ? -Math.round(overflow * offset) : Math.round((h - dh) / 2);
-    ctx.drawImage(sourceImage, 0, dy, WIDTH_PX, dh);
+    targetH = Math.max(1, Math.round(sourceImage.height * (WIDTH_PX / sourceImage.width)));
+  } else if (mode === 'fixed-fit' || mode === 'fixed-crop') {
+    targetH = 230; // 5×3 cm
+  } else if (mode === 'fixed-4x6-fit' || mode === 'fixed-4x6-crop') {
+    targetH = boxH_4x6; // 4×6 cm
   }
 
-  const imgData = ctx.getImageData(0, 0, WIDTH_PX, h);
+  canvas.width = WIDTH_PX;
+  canvas.height = targetH;
+
+  ctx.save();
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, WIDTH_PX, targetH);
+
+  if (mode === 'free') {
+    ctx.drawImage(sourceImage, 0, 0, WIDTH_PX, targetH);
+  } else if (mode === 'fixed-fit') {
+    const scale = Math.min(WIDTH_PX / sourceImage.width, targetH / sourceImage.height);
+    const dw = Math.round(sourceImage.width * scale);
+    const dh = Math.round(sourceImage.height * scale);
+    ctx.drawImage(sourceImage, Math.round((WIDTH_PX - dw) / 2), Math.round((targetH - dh) / 2), dw, dh);
+  } else if (mode === 'fixed-crop') {
+    const scale = WIDTH_PX / sourceImage.width;
+    const dh = Math.round(sourceImage.height * scale);
+    const overflow = dh - targetH;
+    const offset = parseInt(offsetRange.value, 10) / 100;
+    const dy = overflow > 0 ? -Math.round(overflow * offset) : Math.round((targetH - dh) / 2);
+    ctx.drawImage(sourceImage, 0, dy, WIDTH_PX, dh);
+  } else if (mode === 'fixed-4x6-fit') {
+    // 4×6 cm 全体表示（左右反転）: 4x6cm枠内に収まるよう縮小して中央配置
+    const scale = Math.min(boxW_4x6 / sourceImage.width, boxH_4x6 / sourceImage.height);
+    const dw = Math.round(sourceImage.width * scale);
+    const dh = Math.round(sourceImage.height * scale);
+    const dx = Math.round((WIDTH_PX - dw) / 2);
+    const dy = Math.round((targetH - dh) / 2);
+
+    ctx.translate(WIDTH_PX, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(sourceImage, dx, dy, dw, dh);
+  } else if (mode === 'fixed-4x6-crop') {
+    // 4×6 cm 上下位置調整（左右反転）: 幅4cm(307px)に横幅を合わせ、余剰高さをスライダーで調整
+    const scale = boxW_4x6 / sourceImage.width;
+    const dh = Math.round(sourceImage.height * scale);
+    const overflow = dh - boxH_4x6;
+    const offset = parseInt(offsetRange.value, 10) / 100;
+    const dy = overflow > 0 ? -Math.round(overflow * offset) : Math.round((boxH_4x6 - dh) / 2);
+    const dx = Math.round((WIDTH_PX - boxW_4x6) / 2);
+
+    ctx.translate(WIDTH_PX, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(sourceImage, dx, dy, boxW_4x6, dh);
+  }
+  ctx.restore();
+
+  const imgData = ctx.getImageData(0, 0, WIDTH_PX, targetH);
   const d = imgData.data;
-  const total = WIDTH_PX * h;
+  const total = WIDTH_PX * targetH;
 
   const gray = new Float32Array(total);
   const hist = new Int32Array(256);
@@ -177,15 +170,15 @@ function renderAndProcess() {
   }
   threshold = Math.max(70, Math.min(185, threshold));
 
-  const raster = new Uint8Array(8 + (WIDTH_BYTES * h));
+  const raster = new Uint8Array(8 + (WIDTH_BYTES * targetH));
   raster.set([
     0x1D, 0x76, 0x30, 0x00,
     WIDTH_BYTES & 0xFF, (WIDTH_BYTES >> 8) & 0xFF,
-    h & 0xFF, (h >> 8) & 0xFF
+    targetH & 0xFF, (targetH >> 8) & 0xFF
   ], 0);
 
   let rasterIdx = 8;
-  for (let y = 0; y < h; y++) {
+  for (let y = 0; y < targetH; y++) {
     const row = y * WIDTH_PX;
     for (let x = 0; x < WIDTH_BYTES; x++) {
       let byte = 0;
@@ -199,7 +192,7 @@ function renderAndProcess() {
         const err = oldVal - newVal;
 
         if (px + 1 < WIDTH_PX) gray[idx + 1] += err * 0.4375;
-        if (y + 1 < h) {
+        if (y + 1 < targetH) {
           const next = idx + WIDTH_PX;
           if (px > 0) gray[next - 1] += err * 0.1875;
           gray[next] += err * 0.3125;
@@ -221,98 +214,37 @@ function renderAndProcess() {
   updateUI();
 }
 
-// タイムアウト付きフェッチ（フリーズ防止）
-async function fetchWithTimeout(url, options = {}, timeoutMs = 4000) {
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, { ...options, signal: controller.signal });
-    clearTimeout(id);
-    return res;
-  } catch (err) {
-    clearTimeout(id);
-    throw err;
-  }
-}
-
-// 多段プロキシによる画像バイナリ（Blob）取得
-async function fetchImageBlob(src) {
-  if (src.startsWith('blob:') || src.startsWith('data:')) {
-    const res = await fetch(src);
-    return await res.blob();
-  }
-
-  // 1. 直接取得（CORS許可されているサーバー）
-  try {
-    const directRes = await fetchWithTimeout(src, { mode: 'cors' }, 2500);
-    if (directRes.ok) return await directRes.blob();
-  } catch (_) {}
-
-  // 2. プロキシ1 (corsproxy.io)
-  try {
-    const p1 = `https://corsproxy.io/?${encodeURIComponent(src)}`;
-    const r1 = await fetchWithTimeout(p1, {}, 3500);
-    if (r1.ok) return await r1.blob();
-  } catch (_) {}
-
-  // 3. プロキシ2 (allorigins)
-  try {
-    const p2 = `https://api.allorigins.win/raw?url=${encodeURIComponent(src)}`;
-    const r2 = await fetchWithTimeout(p2, {}, 3500);
-    if (r2.ok) return await r2.blob();
-  } catch (_) {}
-
-  throw new Error('すべての画像取得経路が失敗しました');
-}
-
 function loadImageSource(src, isBlob = false) {
-  if (isPrinting || !src) return Promise.reject(new Error('Invalid state'));
+  if (isPrinting || !src) return;
   const currentToken = ++loadCounter;
-  setStatus('画像を読み込んでいます...');
+  setStatus('画像を処理しています...');
 
-  return (async () => {
-    try {
-      let finalUrl = src;
-      let createdBlob = false;
-
-      // 外部URLの場合はBlob化してCanvas汚染・CORSエラーを防止
-      if (!isBlob && !src.startsWith('data:')) {
-        const blob = await fetchImageBlob(src);
-        if (currentToken !== loadCounter) return;
-        finalUrl = URL.createObjectURL(blob);
-        createdBlob = true;
-      }
-
-      await new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => {
-          if (currentToken !== loadCounter) {
-            if (createdBlob) URL.revokeObjectURL(finalUrl);
-            resolve();
-            return;
-          }
-          if (currentBlobUrl && currentBlobUrl !== finalUrl) {
-            URL.revokeObjectURL(currentBlobUrl);
-          }
-          currentBlobUrl = (isBlob || createdBlob) ? finalUrl : null;
-          sourceImage = img;
-          renderAndProcess();
-          setStatus('印刷準備完了');
-          resolve();
-        };
-        img.onerror = () => {
-          if (createdBlob) URL.revokeObjectURL(finalUrl);
-          reject(new Error('Image render error'));
-        };
-        img.src = finalUrl;
-      });
-    } catch (err) {
-      if (currentToken === loadCounter) {
-        setStatus('画像の取得に失敗しました。URLのアクセス権限またはファイル選択をお使いください。');
-        updateUI();
-      }
+  const img = new Image();
+  img.onload = () => {
+    if (currentToken !== loadCounter) {
+      if (isBlob) URL.revokeObjectURL(src);
+      return;
     }
-  })();
+    if (currentBlobUrl && currentBlobUrl !== src) {
+      URL.revokeObjectURL(currentBlobUrl);
+    }
+    currentBlobUrl = isBlob ? src : null;
+    sourceImage = img;
+    renderAndProcess();
+    setStatus('印刷準備完了');
+  };
+
+  img.onerror = () => {
+    if (currentToken !== loadCounter) {
+      if (isBlob) URL.revokeObjectURL(src);
+      return;
+    }
+    if (isBlob) URL.revokeObjectURL(src);
+    setStatus('画像の読み込みに失敗しました');
+    updateUI();
+  };
+
+  img.src = src;
 }
 
 // =============================================================================
@@ -385,7 +317,8 @@ async function sendPacket(bytes) {
 }
 
 modeSelect.onchange = () => {
-  offsetControl.style.display = (modeSelect.value === 'fixed-crop') ? 'block' : 'none';
+  const isCrop = (modeSelect.value === 'fixed-crop' || modeSelect.value === 'fixed-4x6-crop');
+  offsetControl.style.display = isCrop ? 'block' : 'none';
   renderAndProcess();
 };
 

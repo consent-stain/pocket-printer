@@ -16,23 +16,25 @@
     </div>
   </div>
 
-  <!-- 貼り付けエリア（画像・URL両対応） -->
+  <!-- 画像貼り付けエリア（画像バイナリ貼付専用） -->
   <div class="card">
-    <div style="font-size: 13px; font-weight: bold; margin-bottom: 6px; color: #495057;">画像・画像アドレスの貼り付け</div>
-    <div id="pasteZone" contenteditable="true" spellcheck="false" data-placeholder="ここを長押しして「貼り付け」&#10;（コピーした画像 / 画像URL どちらも貼付可能）"></div>
+    <div style="font-size: 13px; font-weight: bold; margin-bottom: 6px; color: #495057;">コピーした画像の貼り付け</div>
+    <div id="pasteZone" contenteditable="true" spellcheck="false" data-placeholder="ここを長押しして「貼り付け」&#10;（Webサイトで「画像をコピー」したデータをペースト）"></div>
     <div id="pasteHint" style="font-size: 11px; color: #6c757d; margin-top: 6px; line-height: 1.4;">
-      ※Web上の画像アドレス（https://...）や「画像をコピー」したデータを長押しペーストできます。
+      ※Webページ上の画像を長押しして「画像をコピー」後、上の枠に貼り付けてください。
     </div>
   </div>
 
   <!-- 印刷設定・ファイル選択 -->
   <div class="card">
     <div class="field-row">
-      <span>印刷サイズ</span>
+      <span>印刷サイズ / オプション</span>
       <select id="modeSelect">
         <option value="free" selected>用紙幅に合わせる (自動)</option>
-        <option value="fixed-fit">5×3 cm (縮小して全体印刷)</option>
-        <option value="fixed-crop">5×3 cm (用紙幅に合わせて上下調整)</option>
+        <option value="fixed-fit">5×3 cm (全体表示)</option>
+        <option value="fixed-crop">5×3 cm (上下位置調整)</option>
+        <option value="fixed-4x6-fit">4×6 cm (全体表示・左右反転)</option>
+        <option value="fixed-4x6-crop">4×6 cm (上下位置調整・左右反転)</option>
       </select>
     </div>
 
