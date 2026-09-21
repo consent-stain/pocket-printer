@@ -39,6 +39,9 @@ const updateUI = () => {
   offsetRange.disabled = isPrinting;
 };
 
+// =============================================================================
+// PWA インストールプロンプト制御
+// =============================================================================
 window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
   deferredPrompt = e;
@@ -59,6 +62,9 @@ window.addEventListener('appinstalled', () => {
   if (btnInstall) btnInstall.style.display = 'none';
 });
 
+// =============================================================================
+// Web Share Target（共有受け取り：POST一時キャッシュ）
+// =============================================================================
 async function checkSharedData() {
   const params = new URLSearchParams(window.location.search);
   if (params.get('from_share') === '1') {
@@ -91,23 +97,21 @@ if (document.readyState === 'loading') {
   checkSharedData();
 }
 
-async function fetchWithProxies(targetUrl) {
-  const proxies = [
-    (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
-    (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`
-  ];
-
-  for (const proxyFn of proxies) {
-    try {
-      const res = await fetch(proxyFn(targetUrl), { headers: { 'Accept': 'text/html,application/xhtml+xml,image/*' } });
-      if (res.ok) return res;
-    } catch (e) {
-      console.warn('Proxy fetch retry:', e);
-    }
+// タイムアウト付きフェッチ（待たされ防止：最大4秒）
+async function fetchWithTimeout(url, options = {}, timeoutMs = 4000) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(id);
+    return res;
+  } catch (err) {
+    clearTimeout(id);
+    throw err;
   }
-  throw new Error('All CORS proxies failed');
 }
 
+// Google短縮URL、WebページURLの解読
 async function processIncomingShareText(text) {
   const rawUrl = extractTargetUrl(text);
   if (!rawUrl) {
@@ -117,50 +121,70 @@ async function processIncomingShareText(text) {
 
   urlInput.value = rawUrl;
 
-  if (rawUrl.includes('share.google') || rawUrl.includes('google.com/url') || rawUrl.includes('google.') || rawUrl.includes('g.co')) {
-    setStatus('Googleリンクを解析中...');
-    try {
-      const res = await fetchWithProxies(rawUrl);
-      const html = await res.text();
-
-      const ogMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
-                      html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i) ||
-                      html.match(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i);
-      
-      if (ogMatch && ogMatch[1]) {
-        let extracted = ogMatch[1].replace(/&amp;/g, '&');
-        if (extracted.startsWith('//')) extracted = 'https:' + extracted;
-        urlInput.value = extracted;
-        loadImageSource(extracted, false);
-        return;
-      }
-
-      const imgurlMatch = html.match(/imgurl=([^&"'>]+)/);
-      if (imgurlMatch && imgurlMatch[1]) {
-        const decoded = decodeURIComponent(imgurlMatch[1]);
+  // 1. URL自体の中に画像URLや転送先がパラメータとして埋まっているか即時チェック（最速・通信不要）
+  try {
+    const parsed = new URL(rawUrl);
+    for (const key of ['imgurl', 'image_url', 'media_url', 'url', 'src', 'target']) {
+      const val = parsed.searchParams.get(key);
+      if (val && (val.startsWith('http://') || val.startsWith('https://'))) {
+        const decoded = decodeURIComponent(val);
         urlInput.value = decoded;
         loadImageSource(decoded, false);
         return;
       }
+    }
+  } catch (_) {}
 
-      const tbnMatch = html.match(/https:\/\/encrypted-tbn[0-9]\.gstatic\.com\/images\?q=[^"'>\s]+/);
-      if (tbnMatch) {
-        urlInput.value = tbnMatch[0];
-        loadImageSource(tbnMatch[0], false);
-        return;
-      }
+  // 2. Google共有リンクや短縮リンクの場合のHTML解析（タイムアウト付きで高速化）
+  if (rawUrl.includes('share.google') || rawUrl.includes('google.com') || rawUrl.includes('g.co')) {
+    setStatus('Googleリンクを解析中...');
+    
+    const proxies = [
+      (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+      (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`
+    ];
 
-      const anyImg = html.match(/<img[^>]+src=["'](https?:\/\/[^"']+\.(?:jpg|jpeg|png|webp)[^"']*)["']/i);
-      if (anyImg && anyImg[1]) {
-        urlInput.value = anyImg[1];
-        loadImageSource(anyImg[1], false);
-        return;
+    for (const proxyFn of proxies) {
+      try {
+        const res = await fetchWithTimeout(proxyFn(rawUrl), {}, 4000);
+        if (!res.ok) continue;
+        const html = await res.text();
+
+        // (A) OGPメタタグ
+        const ogMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
+                        html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i) ||
+                        html.match(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i);
+        if (ogMatch && ogMatch[1]) {
+          let extracted = ogMatch[1].replace(/&amp;/g, '&');
+          if (extracted.startsWith('//')) extracted = 'https:' + extracted;
+          urlInput.value = extracted;
+          loadImageSource(extracted, false);
+          return;
+        }
+
+        // (B) HTML内のimgurlパラメータ
+        const imgMatch = html.match(/imgurl=([^&"'>]+)/);
+        if (imgMatch && imgMatch[1]) {
+          const decoded = decodeURIComponent(imgMatch[1]);
+          urlInput.value = decoded;
+          loadImageSource(decoded, false);
+          return;
+        }
+
+        // (C) Google画像キャッシュ (encrypted-tbn0)
+        const tbnMatch = html.match(/https:\/\/encrypted-tbn[0-9]\.gstatic\.com\/images\?q=[^"'>\s]+/);
+        if (tbnMatch) {
+          urlInput.value = tbnMatch[0];
+          loadImageSource(tbnMatch[0], false);
+          return;
+        }
+      } catch (err) {
+        console.warn('Proxy retry next:', err);
       }
-    } catch (e) {
-      console.warn('HTML解析例外:', e);
     }
   }
 
+  // フォールバック：通常の画像読み込み
   loadImageSource(rawUrl, false);
 }
 
@@ -170,21 +194,7 @@ function extractTargetUrl(input) {
   if (text.startsWith('data:image/')) return text;
 
   const match = text.match(/https?:\/\/[^\s]+/);
-  const rawUrl = match ? match[0] : text;
-
-  try {
-    const parsed = new URL(rawUrl);
-    if (parsed.searchParams.has('imgurl')) {
-      const decoded = decodeURIComponent(parsed.searchParams.get('imgurl'));
-      return decoded.startsWith('http') ? decoded : null;
-    }
-    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-      return rawUrl;
-    }
-    return null;
-  } catch (_) {
-    return null;
-  }
+  return match ? match[0] : (text.startsWith('http') ? text : null);
 }
 
 function handleUrlLoad() {
@@ -196,6 +206,9 @@ urlInput.onkeydown = (e) => {
   if (e.key === 'Enter') handleUrlLoad();
 };
 
+// =============================================================================
+// 画像変換 (リサイズ + 大津2値化 + FS誤差拡散 + ESC/POSパッキング)
+// =============================================================================
 function renderAndProcess() {
   if (!sourceImage) return;
 
@@ -309,7 +322,7 @@ async function loadImageBlob(src) {
   }
 
   try {
-    const directRes = await fetch(src, { mode: 'cors' });
+    const directRes = await fetchWithTimeout(src, { mode: 'cors' }, 3000);
     if (directRes.ok) return await directRes.blob();
   } catch (_) {}
 
@@ -320,7 +333,7 @@ async function loadImageBlob(src) {
 
   for (const p of proxies) {
     try {
-      const res = await fetch(p);
+      const res = await fetchWithTimeout(p, {}, 3500);
       if (res.ok) return await res.blob();
     } catch (_) {}
   }
@@ -369,13 +382,16 @@ function loadImageSource(src, isBlob = false) {
       });
     } catch (err) {
       if (currentToken === loadCounter) {
-        setStatus('画像の取得に失敗しました。端末内のファイル選択をお使いください。');
+        setStatus('Googleページの保護等で画像を取得できませんでした。Google画像検索で画像を長押し ➜「画像を共有」をお試しください。');
         updateUI();
       }
     }
   })();
 }
 
+// =============================================================================
+// Bluetooth 通信制御 (LPC50_95A5 BLE 0xff00/0xff02)
+// =============================================================================
 const onDisconnected = () => {
   writeChar = null;
   isPrinting = false;
