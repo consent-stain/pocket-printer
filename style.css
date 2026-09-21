@@ -1,8 +1,6 @@
 :root {
   --primary: #0d6efd;
   --primary-hover: #0b5ed7;
-  --success: #198754;
-  --success-hover: #157347;
   --bg: #f8f9fa;
   --card-bg: #ffffff;
   --border: #dee2e6;
@@ -56,31 +54,42 @@ button.primary {
 
 button.primary:active { background: var(--primary-hover); }
 
-button.btn-install {
-  background: var(--success);
-  color: #ffffff;
-  border-color: var(--success);
-}
-
-button.btn-install:active { background: var(--success-hover); }
-
-.btn-clear-cache {
-  flex: none;
-  padding: 4px 10px;
-  font-size: 11px;
-  background: #6c757d;
-  color: #ffffff;
-  border: 1px solid #6c757d;
-  border-radius: 4px;
-}
-
-.btn-clear-cache:active {
-  background: #565e64;
-}
-
 button:disabled {
   opacity: 0.35;
   cursor: not-allowed;
+}
+
+/* 長押し貼り付け専用ゾーン */
+#pasteZone {
+  min-height: 80px;
+  border: 2px dashed #0d6efd;
+  background: #f8faff;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 12px;
+  font-size: 13px;
+  color: #0d6efd;
+  outline: none;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+  position: relative;
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+#pasteZone:focus {
+  border-color: #0b5ed7;
+  background: #eef4ff;
+}
+
+#pasteZone:empty::before {
+  content: attr(data-placeholder);
+  color: #6c757d;
+  pointer-events: none;
 }
 
 .field-row {
@@ -91,22 +100,12 @@ button:disabled {
   font-size: 14px;
 }
 
-.input-row { display: flex; gap: 6px; margin-bottom: 6px; }
-
-input[type="text"], select {
+select {
   padding: 8px 10px;
   font-size: 14px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: #ffffff;
-}
-
-input[type="text"] { flex: 1; min-width: 0; }
-
-.help-text {
-  font-size: 11px;
-  color: var(--subtext);
-  line-height: 1.4;
 }
 
 #offsetControl {
@@ -120,7 +119,7 @@ input[type="text"] { flex: 1; min-width: 0; }
 
 #selectZone {
   border: 2px dashed #adb5bd;
-  padding: 16px;
+  padding: 14px;
   text-align: center;
   color: var(--subtext);
   border-radius: 6px;

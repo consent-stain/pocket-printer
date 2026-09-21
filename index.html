@@ -3,36 +3,22 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#0d6efd">
   <title>ポケットプリンター</title>
-  <link rel="manifest" href="/pocket-printer/manifest.json">
-  <link rel="icon" href="/pocket-printer/icon-192.png" type="image/png">
-  <link rel="apple-touch-icon" href="/pocket-printer/icon-192.png">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-  <!-- 通信制御・PWAインストール -->
+  <!-- 通信制御 -->
   <div class="card">
     <div class="btn-group">
-      <button id="btnInstall" type="button" class="btn-install" style="display: none;">アプリをインストール</button>
       <button id="btnConnect" type="button">プリンター接続</button>
       <button id="btnPrint" type="button" class="primary" disabled>印刷開始</button>
     </div>
   </div>
 
-  <!-- 画像URL入力 -->
+  <!-- 貼り付けエリア（画像・URL両対応） -->
   <div class="card">
-    <div class="field-row">
-      <span style="font-weight: bold;">画像URLから取得</span>
-    </div>
-    <div class="input-row">
-      <input type="text" id="urlInput" placeholder="画像URLを入力または長押しペースト">
-      <button id="btnLoadUrl" type="button" class="primary" style="flex: none; width: 64px;">読込</button>
-    </div>
-    <div class="help-text">
-      ※Web上の画像URL、Google共有リンク、Base64に対応しています。
-    </div>
+    <div id="pasteZone" contenteditable="true" spellcheck="false" data-placeholder="ここを長押しして「貼り付け」&#10;（画像バイナリ / 画像URL どちらも対応）"></div>
   </div>
 
   <!-- 印刷設定・ファイル選択 -->
@@ -64,70 +50,6 @@
   <canvas id="previewCanvas" width="384" height="120"></canvas>
   <div id="status">プリンターに接続してください</div>
 
-  <!-- システム管理 -->
-  <div class="card" style="margin-top: 14px; background: #f8f9fa;">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-      <span style="font-size: 12px; font-weight: bold; color: #495057;">システム管理</span>
-      <button id="btnClearCache" type="button" class="btn-clear-cache">キャッシュ削除・再読込</button>
-    </div>
-    <div id="diagContent" style="font-size: 11px; color: #6c757d; font-family: monospace; line-height: 1.5;">システム準備完了</div>
-  </div>
-
-  <script>
-    const logBox = document.getElementById('diagContent');
-    function logState(msg) {
-      if (logBox) {
-        if (logBox.textContent === 'システム準備完了') logBox.innerHTML = '';
-        const div = document.createElement('div');
-        div.textContent = msg;
-        logBox.appendChild(div);
-      }
-    }
-
-    let mLink = document.querySelector('link[rel="manifest"]');
-    if (!mLink) {
-      mLink = document.createElement('link');
-      mLink.rel = 'manifest';
-      mLink.href = '/pocket-printer/manifest.json';
-      document.head.appendChild(mLink);
-    }
-
-    document.getElementById('btnClearCache').onclick = async () => {
-      if ('serviceWorker' in navigator) {
-        const regs = await navigator.serviceWorker.getRegistrations();
-        for (const r of regs) await r.unregister();
-      }
-      if ('caches' in window) {
-        const keys = await caches.keys();
-        for (const k of keys) await caches.delete(k);
-      }
-      alert('キャッシュを消去しました。再読込します。');
-      window.location.reload(true);
-    };
-
-    (async () => {
-      if ('serviceWorker' in navigator) {
-        try {
-          const reg = await navigator.serviceWorker.register('/pocket-printer/sw.js?v=23', { scope: '/pocket-printer/' });
-          logState('・SW: ' + (reg.active ? '稼働中' : '登録待機'));
-        } catch (err) {
-          logState('・SWエラー: ' + err.message);
-        }
-      }
-      try {
-        const res = await fetch(mLink.href + '?t=' + Date.now());
-        if (res.ok) {
-          const j = await res.json();
-          logState('・Manifest: OK (' + j.short_name + ')');
-        }
-      } catch (e) {}
-    })();
-
-    window.addEventListener('beforeinstallprompt', (e) => {
-      window.hasPrompt = true;
-      logState('★インストール資格OK！');
-    });
-  </script>
   <script src="app.js"></script>
 </body>
 </html>
