@@ -50,7 +50,9 @@ const updateUI = () => {
   offsetRange.disabled = isPrinting;
 };
 
-// PWA インストールハンドラ
+// =============================================================================
+// PWA インストールプロンプト制御
+// =============================================================================
 window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
   deferredPrompt = e;
@@ -75,6 +77,30 @@ window.addEventListener('appinstalled', () => {
   console.log('アプリがインストールされました');
 });
 
+// =============================================================================
+// Web Share Target（共有機能）からの受け取り処理
+// =============================================================================
+window.addEventListener('DOMContentLoaded', async () => {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('from_share') === '1') {
+    try {
+      const cache = await caches.open('shared-image');
+      const res = await cache.match('incoming-image');
+      if (res) {
+        const blob = await res.blob();
+        loadImageSource(URL.createObjectURL(blob), true);
+        await cache.delete('incoming-image');
+        window.history.replaceState({}, '', window.location.pathname);
+      }
+    } catch (err) {
+      console.warn('共有画像受取エラー:', err);
+    }
+  }
+});
+
+// =============================================================================
+// 画像URL解析・入力ハンドリング
+// =============================================================================
 function extractTargetUrl(input) {
   const text = input ? input.trim() : '';
   if (!text) return null;
@@ -83,18 +109,22 @@ function extractTargetUrl(input) {
   try {
     const parsed = new URL(text);
     if (parsed.searchParams.has('imgurl')) {
-      return decodeURIComponent(parsed.searchParams.get('imgurl'));
+      const decoded = decodeURIComponent(parsed.searchParams.get('imgurl'));
+      return decoded.startsWith('http://') || decoded.startsWith('https://') ? decoded : null;
     }
-    return text;
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return text;
+    }
+    return null;
   } catch (_) {
-    return text;
+    return null;
   }
 }
 
 function handleUrlLoad() {
   const target = extractTargetUrl(urlInput.value);
   if (!target) {
-    setStatus('有効なURLを入力してください');
+    setStatus('有効な画像URL（http://, https://, data:image/）を入力してください');
     return;
   }
   loadImageSource(target, false);
@@ -105,11 +135,14 @@ urlInput.onkeydown = (e) => {
   if (e.key === 'Enter') handleUrlLoad();
 };
 
+// =============================================================================
+// 画像変換 (リサイズ + 高速大津2値化 + FS誤差拡散 + ESC/POSラスタパッキング)
+// =============================================================================
 function renderAndProcess() {
   if (!sourceImage) return;
 
   const mode = modeSelect.value;
-  const hFixed = 230;
+  const hFixed = 230; // 5x3cm
   const h = (mode === 'free')
     ? Math.max(1, Math.round(sourceImage.height * (WIDTH_PX / sourceImage.width)))
     : hFixed;
@@ -151,6 +184,7 @@ function renderAndProcess() {
     sum += val;
   }
 
+  // 大津の2値化 (整数演算)
   let sumB = 0, wB = 0, varMax = 0, threshold = 128;
   for (let t = 0; t < 256; t++) {
     wB += hist[t];
@@ -167,6 +201,7 @@ function renderAndProcess() {
   }
   threshold = Math.max(70, Math.min(185, threshold));
 
+  // ESC/POS GS v 0 ヘッダー
   const raster = new Uint8Array(8 + (WIDTH_BYTES * h));
   raster.set([
     0x1D, 0x76, 0x30, 0x00,
@@ -174,6 +209,7 @@ function renderAndProcess() {
     h & 0xFF, (h >> 8) & 0xFF
   ], 0);
 
+  // Floyd-Steinberg 誤差拡散 & 1ビットパッキング
   let rasterIdx = 8;
   for (let y = 0; y < h; y++) {
     const row = y * WIDTH_PX;
@@ -223,16 +259,17 @@ function loadImageSource(src, isBlob = false) {
       if (currentToken !== loadCounter) {
         if (isBlob) URL.revokeObjectURL(src);
         resolve();
-      } else {
-        if (currentBlobUrl && currentBlobUrl !== src) {
-          URL.revokeObjectURL(currentBlobUrl);
-        }
-        currentBlobUrl = isBlob ? src : null;
-        sourceImage = img;
-        renderAndProcess();
-        setStatus('印刷準備完了');
-        resolve();
+        return;
       }
+      if (currentBlobUrl && currentBlobUrl !== src) {
+        URL.revokeObjectURL(currentBlobUrl);
+      }
+      currentBlobUrl = isBlob ? src : null;
+
+      sourceImage = img;
+      renderAndProcess();
+      setStatus('印刷準備完了');
+      resolve();
     };
 
     img.onerror = () => {
@@ -258,6 +295,9 @@ function loadImageSource(src, isBlob = false) {
   });
 }
 
+// =============================================================================
+// Bluetooth 通信制御 (LPC50_95A5 BLE 0xff00/0xff02)
+// =============================================================================
 const onDisconnected = () => {
   writeChar = null;
   isPrinting = false;
@@ -324,6 +364,9 @@ async function sendPacket(bytes) {
   }
 }
 
+// =============================================================================
+// イベントリスナー
+// =============================================================================
 modeSelect.onchange = () => {
   offsetControl.style.display = (modeSelect.value === 'fixed-crop') ? 'block' : 'none';
   renderAndProcess();
