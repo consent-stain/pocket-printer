@@ -1,4 +1,4 @@
-// Service Worker 登録（相対パス）
+// Service Worker 登録
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js')
@@ -286,7 +286,7 @@ btnConnect.onclick = async () => {
     setStatus('プリンターに接続しました');
     updateUI();
   } catch (err) {
-    setStatus(`接続キャンセル: ${err.message || err}`);
+    setStatus('接続キャンセル: ' + (err.message || err));
     updateUI();
   }
 };
@@ -304,7 +304,7 @@ btnPrint.onclick = async () => {
     await new Promise(r => setTimeout(r, 80));
     setStatus('印刷が完了しました');
   } catch (err) {
-    setStatus(`印刷エラー: ${err.message || err}`);
+    setStatus('印刷エラー: ' + (err.message || err));
   } finally {
     isPrinting = false;
     updateUI();
@@ -331,7 +331,7 @@ modeSelect.onchange = () => {
 
 offsetRange.oninput = () => {
   const v = parseInt(offsetRange.value, 10);
-  offsetVal.textContent = (v === 0) ? '上寄り' : (v === 50) ? '中央' : (v === 100) ? '下寄り' : `${v}%`;
+  offsetVal.textContent = (v === 0) ? '上寄り' : (v === 50) ? '中央' : (v === 100) ? '下寄り' : (v + '%');
   renderAndProcess();
 };
 
