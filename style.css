@@ -61,7 +61,7 @@ button:disabled {
 
 /* 長押し貼り付け専用ゾーン */
 #pasteZone {
-  min-height: 80px;
+  min-height: 70px;
   border: 2px dashed #0d6efd;
   background: #f8faff;
   border-radius: 8px;
@@ -69,15 +69,16 @@ button:disabled {
   align-items: center;
   justify-content: center;
   text-align: center;
-  padding: 12px;
+  padding: 10px;
   font-size: 13px;
-  color: #0d6efd;
+  color: #212529;
   outline: none;
   user-select: text;
   -webkit-user-select: text;
   cursor: text;
   position: relative;
   white-space: pre-wrap;
+  word-break: break-all;
   line-height: 1.5;
 }
 

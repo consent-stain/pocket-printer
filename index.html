@@ -18,7 +18,11 @@
 
   <!-- 貼り付けエリア（画像・URL両対応） -->
   <div class="card">
-    <div id="pasteZone" contenteditable="true" spellcheck="false" data-placeholder="ここを長押しして「貼り付け」&#10;（画像バイナリ / 画像URL どちらも対応）"></div>
+    <div style="font-size: 13px; font-weight: bold; margin-bottom: 6px; color: #495057;">画像・画像アドレスの貼り付け</div>
+    <div id="pasteZone" contenteditable="true" spellcheck="false" data-placeholder="ここを長押しして「貼り付け」&#10;（コピーした画像 / 画像URL どちらも貼付可能）"></div>
+    <div id="pasteHint" style="font-size: 11px; color: #6c757d; margin-top: 6px; line-height: 1.4;">
+      ※Web上の画像アドレス（https://...）や「画像をコピー」したデータを長押しペーストできます。
+    </div>
   </div>
 
   <!-- 印刷設定・ファイル選択 -->

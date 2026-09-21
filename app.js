@@ -11,6 +11,7 @@ const ctx = canvas.getContext('2d', { willReadFrequently: true });
 const btnConnect = document.getElementById('btnConnect');
 const btnPrint = document.getElementById('btnPrint');
 const pasteZone = document.getElementById('pasteZone');
+const pasteHint = document.getElementById('pasteHint');
 const modeSelect = document.getElementById('modeSelect');
 const offsetControl = document.getElementById('offsetControl');
 const offsetRange = document.getElementById('offsetRange');
@@ -37,55 +38,71 @@ const updateUI = () => {
 };
 
 // =============================================================================
-// ペースト枠（画像バイナリ / 画像URL 両対応）
+// ペースト処理（画像バイナリ / 画像アドレス両対応 & 多重フォールバック）
 // =============================================================================
-pasteZone.addEventListener('paste', (e) => {
+pasteZone.addEventListener('paste', async (e) => {
   e.preventDefault();
   const clipboard = e.clipboardData;
   if (!clipboard) return;
 
-  // 1. 画像バイナリ（「画像をコピー」など）
+  // 1. 画像バイナリ（「画像をコピー」）
   const items = clipboard.items;
-  for (let i = 0; i < items.length; i++) {
-    if (items[i].type.indexOf('image') !== -1) {
-      const file = items[i].getAsFile();
-      if (file) {
-        pasteZone.textContent = '';
-        loadImageSource(URL.createObjectURL(file), true);
-        return;
+  if (items) {
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf('image') !== -1) {
+        const file = items[i].getAsFile();
+        if (file) {
+          pasteZone.textContent = '【画像を貼り付けました】';
+          loadImageSource(URL.createObjectURL(file), true);
+          return;
+        }
       }
     }
   }
 
-  // 2. テキスト・URL（「画像アドレスをコピー」「リンクをコピー」など）
-  const text = clipboard.getData('text');
-  if (text) {
-    pasteZone.textContent = '';
-    const cleanUrl = extractTargetUrl(text);
+  // 2. HTML形式貼り付け内の <img> タグ検索
+  const htmlData = clipboard.getData('text/html');
+  if (htmlData) {
+    const imgMatch = htmlData.match(/<img[^>]+src=["']([^"']+)["']/i);
+    if (imgMatch && imgMatch[1]) {
+      const src = imgMatch[1].replace(/&amp;/g, '&');
+      pasteZone.textContent = src;
+      loadImageSource(src, false);
+      return;
+    }
+  }
+
+  // 3. テキスト・URL（「画像アドレスをコピー」など）
+  const rawText = clipboard.getData('text');
+  if (rawText) {
+    pasteZone.textContent = rawText.trim();
+    const cleanUrl = extractTargetUrl(rawText);
     if (cleanUrl) {
       loadImageSource(cleanUrl, false);
     } else {
-      setStatus('有効な画像アドレスを認識できませんでした');
+      setStatus('貼り付けられたテキストから画像アドレスを認識できませんでした');
     }
   }
 });
 
-// URL抽出ヘルパー
+// URL抽出ロジック（Google画像検索パラメータ、改行混入、Base64等に完全対応）
 function extractTargetUrl(input) {
-  const text = input ? input.trim() : '';
-  if (!text) return null;
+  if (!input) return null;
+  const text = input.trim();
   if (text.startsWith('data:image/')) return text;
 
-  const match = text.match(/https?:\/\/[^\s]+/);
+  // テキスト内から URL (http/https) を検出
+  const match = text.match(/https?:\/\/[^\s"'>]+/);
   const rawUrl = match ? match[0] : text;
 
   try {
     const parsed = new URL(rawUrl);
-    // Google画像検索等の imgurl パラメータがあれば優先抽出
+    // Google画像検索等の imgurl パラメータを優先
     if (parsed.searchParams.has('imgurl')) {
       const decoded = decodeURIComponent(parsed.searchParams.get('imgurl'));
-      return decoded.startsWith('http') ? decoded : null;
+      if (decoded.startsWith('http')) return decoded;
     }
+    // 一般的な画像拡張子、または画像配信URL
     if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
       return rawUrl;
     }
@@ -204,52 +221,98 @@ function renderAndProcess() {
   updateUI();
 }
 
+// タイムアウト付きフェッチ（フリーズ防止）
+async function fetchWithTimeout(url, options = {}, timeoutMs = 4000) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(id);
+    return res;
+  } catch (err) {
+    clearTimeout(id);
+    throw err;
+  }
+}
+
+// 多段プロキシによる画像バイナリ（Blob）取得
+async function fetchImageBlob(src) {
+  if (src.startsWith('blob:') || src.startsWith('data:')) {
+    const res = await fetch(src);
+    return await res.blob();
+  }
+
+  // 1. 直接取得（CORS許可されているサーバー）
+  try {
+    const directRes = await fetchWithTimeout(src, { mode: 'cors' }, 2500);
+    if (directRes.ok) return await directRes.blob();
+  } catch (_) {}
+
+  // 2. プロキシ1 (corsproxy.io)
+  try {
+    const p1 = `https://corsproxy.io/?${encodeURIComponent(src)}`;
+    const r1 = await fetchWithTimeout(p1, {}, 3500);
+    if (r1.ok) return await r1.blob();
+  } catch (_) {}
+
+  // 3. プロキシ2 (allorigins)
+  try {
+    const p2 = `https://api.allorigins.win/raw?url=${encodeURIComponent(src)}`;
+    const r2 = await fetchWithTimeout(p2, {}, 3500);
+    if (r2.ok) return await r2.blob();
+  } catch (_) {}
+
+  throw new Error('すべての画像取得経路が失敗しました');
+}
+
 function loadImageSource(src, isBlob = false) {
   if (isPrinting || !src) return Promise.reject(new Error('Invalid state'));
   const currentToken = ++loadCounter;
   setStatus('画像を読み込んでいます...');
 
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'Anonymous';
+  return (async () => {
+    try {
+      let finalUrl = src;
+      let createdBlob = false;
 
-    img.onload = () => {
-      if (currentToken !== loadCounter) {
-        if (isBlob) URL.revokeObjectURL(src);
-        resolve();
-        return;
+      // 外部URLの場合はBlob化してCanvas汚染・CORSエラーを防止
+      if (!isBlob && !src.startsWith('data:')) {
+        const blob = await fetchImageBlob(src);
+        if (currentToken !== loadCounter) return;
+        finalUrl = URL.createObjectURL(blob);
+        createdBlob = true;
       }
-      if (currentBlobUrl && currentBlobUrl !== src) {
-        URL.revokeObjectURL(currentBlobUrl);
-      }
-      currentBlobUrl = isBlob ? src : null;
-      sourceImage = img;
-      renderAndProcess();
-      setStatus('印刷準備完了');
-      resolve();
-    };
 
-    img.onerror = () => {
-      if (currentToken !== loadCounter) {
-        if (isBlob) URL.revokeObjectURL(src);
-        resolve();
-        return;
-      }
-      // CORSフォールバック
-      if (!isBlob && !src.startsWith('data:') && !src.startsWith('https://corsproxy.io/?')) {
-        loadImageSource('https://corsproxy.io/?' + encodeURIComponent(src), false)
-          .then(resolve)
-          .catch(reject);
-      } else {
-        if (isBlob) URL.revokeObjectURL(src);
-        setStatus('画像の取得に失敗しました。端末内のファイル選択をお使いください。');
+      await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          if (currentToken !== loadCounter) {
+            if (createdBlob) URL.revokeObjectURL(finalUrl);
+            resolve();
+            return;
+          }
+          if (currentBlobUrl && currentBlobUrl !== finalUrl) {
+            URL.revokeObjectURL(currentBlobUrl);
+          }
+          currentBlobUrl = (isBlob || createdBlob) ? finalUrl : null;
+          sourceImage = img;
+          renderAndProcess();
+          setStatus('印刷準備完了');
+          resolve();
+        };
+        img.onerror = () => {
+          if (createdBlob) URL.revokeObjectURL(finalUrl);
+          reject(new Error('Image render error'));
+        };
+        img.src = finalUrl;
+      });
+    } catch (err) {
+      if (currentToken === loadCounter) {
+        setStatus('画像の取得に失敗しました。URLのアクセス権限またはファイル選択をお使いください。');
         updateUI();
-        reject(new Error('Load failed'));
       }
-    };
-
-    img.src = src;
-  });
+    }
+  })();
 }
 
 // =============================================================================
