@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pocket-printer-v21';
+const CACHE_NAME = 'pocket-printer-v22';
 const ASSETS = [
   '/pocket-printer/',
   '/pocket-printer/index.html',

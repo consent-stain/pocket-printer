@@ -12,7 +12,6 @@
 </head>
 <body>
 
-  <!-- 通信制御・PWAインストール -->
   <div class="card">
     <div class="btn-group">
       <button id="btnInstall" type="button" class="btn-install" style="display: none;">アプリをインストール</button>
@@ -21,7 +20,6 @@
     </div>
   </div>
 
-  <!-- 画像URL入力 -->
   <div class="card">
     <div class="field-row">
       <span style="font-weight: bold;">画像URLから取得</span>
@@ -31,11 +29,10 @@
       <button id="btnLoadUrl" type="button" class="primary" style="flex: none; width: 64px;">読込</button>
     </div>
     <div class="help-text">
-      ※Web上の画像アドレス、Base64、Google共有リンクに対応しています。
+      ※Google共有リンク、Web上の画像URL、Base64に対応しています。
     </div>
   </div>
 
-  <!-- 印刷設定・ファイル選択 -->
   <div class="card">
     <div class="field-row">
       <span>印刷サイズ</span>
@@ -60,11 +57,9 @@
     </div>
   </div>
 
-  <!-- プレビュー -->
   <canvas id="previewCanvas" width="384" height="120"></canvas>
   <div id="status">プリンターに接続してください</div>
 
-  <!-- システム管理 -->
   <div class="card" style="margin-top: 14px; background: #f8f9fa;">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
       <span style="font-size: 12px; font-weight: bold; color: #495057;">システム管理</span>
@@ -108,7 +103,7 @@
     (async () => {
       if ('serviceWorker' in navigator) {
         try {
-          const reg = await navigator.serviceWorker.register('/pocket-printer/sw.js?v=21', { scope: '/pocket-printer/' });
+          const reg = await navigator.serviceWorker.register('/pocket-printer/sw.js?v=22', { scope: '/pocket-printer/' });
           logState('・SW: ' + (reg.active ? '稼働中' : '登録待機'));
         } catch (err) {
           logState('・SWエラー: ' + err.message);

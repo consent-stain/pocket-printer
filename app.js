@@ -1,4 +1,3 @@
-// C50 サーマルプリンター規格定数 (LPC50_95A5 ESC/POS)
 const WIDTH_PX = 384;
 const WIDTH_BYTES = 48;
 const CHUNK_SIZE = 128;
@@ -40,9 +39,6 @@ const updateUI = () => {
   offsetRange.disabled = isPrinting;
 };
 
-// =============================================================================
-// PWA インストールプロンプト制御
-// =============================================================================
 window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
   deferredPrompt = e;
@@ -63,9 +59,6 @@ window.addEventListener('appinstalled', () => {
   if (btnInstall) btnInstall.style.display = 'none';
 });
 
-// =============================================================================
-// Web Share Target（共有受け取り：POST一時キャッシュ）
-// =============================================================================
 async function checkSharedData() {
   const params = new URLSearchParams(window.location.search);
   if (params.get('from_share') === '1') {
@@ -98,6 +91,23 @@ if (document.readyState === 'loading') {
   checkSharedData();
 }
 
+async function fetchWithProxies(targetUrl) {
+  const proxies = [
+    (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+    (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`
+  ];
+
+  for (const proxyFn of proxies) {
+    try {
+      const res = await fetch(proxyFn(targetUrl), { headers: { 'Accept': 'text/html,application/xhtml+xml,image/*' } });
+      if (res.ok) return res;
+    } catch (e) {
+      console.warn('Proxy fetch retry:', e);
+    }
+  }
+  throw new Error('All CORS proxies failed');
+}
+
 async function processIncomingShareText(text) {
   const rawUrl = extractTargetUrl(text);
   if (!rawUrl) {
@@ -107,13 +117,12 @@ async function processIncomingShareText(text) {
 
   urlInput.value = rawUrl;
 
-  if (rawUrl.includes('share.google') || rawUrl.includes('google.com/url')) {
+  if (rawUrl.includes('share.google') || rawUrl.includes('google.com/url') || rawUrl.includes('google.') || rawUrl.includes('g.co')) {
     setStatus('Googleリンクを解析中...');
     try {
-      const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(rawUrl);
-      const res = await fetch(proxyUrl);
+      const res = await fetchWithProxies(rawUrl);
       const html = await res.text();
-      
+
       const ogMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
                       html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i) ||
                       html.match(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i);
@@ -133,17 +142,28 @@ async function processIncomingShareText(text) {
         loadImageSource(decoded, false);
         return;
       }
+
+      const tbnMatch = html.match(/https:\/\/encrypted-tbn[0-9]\.gstatic\.com\/images\?q=[^"'>\s]+/);
+      if (tbnMatch) {
+        urlInput.value = tbnMatch[0];
+        loadImageSource(tbnMatch[0], false);
+        return;
+      }
+
+      const anyImg = html.match(/<img[^>]+src=["'](https?:\/\/[^"']+\.(?:jpg|jpeg|png|webp)[^"']*)["']/i);
+      if (anyImg && anyImg[1]) {
+        urlInput.value = anyImg[1];
+        loadImageSource(anyImg[1], false);
+        return;
+      }
     } catch (e) {
-      console.warn('リンク先HTML解析エラー:', e);
+      console.warn('HTML解析例外:', e);
     }
   }
 
   loadImageSource(rawUrl, false);
 }
 
-// =============================================================================
-// 画像URL解析・入力ハンドリング
-// =============================================================================
 function extractTargetUrl(input) {
   const text = input ? input.trim() : '';
   if (!text) return null;
@@ -176,9 +196,6 @@ urlInput.onkeydown = (e) => {
   if (e.key === 'Enter') handleUrlLoad();
 };
 
-// =============================================================================
-// 画像変換 (リサイズ + 大津2値化 + FS誤差拡散 + ESC/POSパッキング)
-// =============================================================================
 function renderAndProcess() {
   if (!sourceImage) return;
 
@@ -285,56 +302,80 @@ function renderAndProcess() {
   updateUI();
 }
 
+async function loadImageBlob(src) {
+  if (src.startsWith('blob:') || src.startsWith('data:')) {
+    const res = await fetch(src);
+    return await res.blob();
+  }
+
+  try {
+    const directRes = await fetch(src, { mode: 'cors' });
+    if (directRes.ok) return await directRes.blob();
+  } catch (_) {}
+
+  const proxies = [
+    `https://corsproxy.io/?${encodeURIComponent(src)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(src)}`
+  ];
+
+  for (const p of proxies) {
+    try {
+      const res = await fetch(p);
+      if (res.ok) return await res.blob();
+    } catch (_) {}
+  }
+  throw new Error('All image fetch sources failed');
+}
+
 function loadImageSource(src, isBlob = false) {
   if (isPrinting || !src) return Promise.reject(new Error('Invalid state'));
   const currentToken = ++loadCounter;
   setStatus('画像を読み込んでいます...');
 
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'Anonymous';
+  return (async () => {
+    try {
+      let finalUrl = src;
+      let createdBlob = false;
 
-    img.onload = () => {
-      if (currentToken !== loadCounter) {
-        if (isBlob) URL.revokeObjectURL(src);
-        resolve();
-      } else {
-        if (currentBlobUrl && currentBlobUrl !== src) {
-          URL.revokeObjectURL(currentBlobUrl);
-        }
-        currentBlobUrl = isBlob ? src : null;
-        sourceImage = img;
-        renderAndProcess();
-        setStatus('印刷準備完了');
-        resolve();
+      if (!isBlob && !src.startsWith('data:')) {
+        const blob = await loadImageBlob(src);
+        if (currentToken !== loadCounter) return;
+        finalUrl = URL.createObjectURL(blob);
+        createdBlob = true;
       }
-    };
 
-    img.onerror = () => {
-      if (currentToken !== loadCounter) {
-        if (isBlob) URL.revokeObjectURL(src);
-        resolve();
-      } else {
-        if (!isBlob && !src.startsWith('data:') && !src.startsWith('https://corsproxy.io/?')) {
-          loadImageSource('https://corsproxy.io/?' + encodeURIComponent(src), false)
-            .then(resolve)
-            .catch(reject);
-        } else {
-          if (isBlob) URL.revokeObjectURL(src);
-          setStatus('画像の取得に失敗しました。端末内のファイル選択をお使いください。');
-          updateUI();
-          reject(new Error('Load failed'));
-        }
+      await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          if (currentToken !== loadCounter) {
+            if (createdBlob) URL.revokeObjectURL(finalUrl);
+            resolve();
+            return;
+          }
+          if (currentBlobUrl && currentBlobUrl !== finalUrl) {
+            URL.revokeObjectURL(currentBlobUrl);
+          }
+          currentBlobUrl = (isBlob || createdBlob) ? finalUrl : null;
+          sourceImage = img;
+          renderAndProcess();
+          setStatus('印刷準備完了');
+          resolve();
+        };
+        img.onerror = () => {
+          if (createdBlob) URL.revokeObjectURL(finalUrl);
+          reject(new Error('Image render error'));
+        };
+        img.src = finalUrl;
+      });
+    } catch (err) {
+      if (currentToken === loadCounter) {
+        setStatus('画像の取得に失敗しました。端末内のファイル選択をお使いください。');
+        updateUI();
       }
-    };
-
-    img.src = src;
-  });
+    }
+  })();
 }
 
-// =============================================================================
-// Bluetooth 通信制御 (LPC50_95A5 BLE 0xff00/0xff02)
-// =============================================================================
 const onDisconnected = () => {
   writeChar = null;
   isPrinting = false;
