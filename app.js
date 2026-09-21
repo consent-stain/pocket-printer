@@ -64,47 +64,38 @@ window.addEventListener('appinstalled', () => {
 });
 
 // =============================================================================
-// Web Share Target（共有受け取り：POST一時キャッシュ & GETクエリ両対応）
+// Web Share Target（共有受け取り：画像ファイル / Google画像検索URL両対応）
 // =============================================================================
 async function checkSharedData() {
   const params = new URLSearchParams(window.location.search);
-  
-  // 1. GETクエリによる共有（URL / テキスト）
-  const sharedUrl = params.get('url') || params.get('text');
-  if (sharedUrl) {
-    const target = extractTargetUrl(sharedUrl);
-    if (target) {
-      urlInput.value = target;
-      loadImageSource(target, false);
-    }
-    window.history.replaceState({}, '', window.location.pathname);
-    return;
-  }
-
-  // 2. POSTによる共有一時バッファ（ファイル）
   if (params.get('from_share') === '1') {
     try {
       const cache = await caches.open('shared-image');
+      
+      // 1. 画像ファイル受取
       const fileRes = await cache.match('incoming-image');
       if (fileRes) {
         const blob = await fileRes.blob();
         loadImageSource(URL.createObjectURL(blob), true);
         await cache.delete('incoming-image');
       } else {
+        // 2. Google画像検索などのURL/テキスト受取
         const urlRes = await cache.match('incoming-url');
         if (urlRes) {
-          const textData = await urlRes.text();
+          const rawShared = await urlRes.text();
           await cache.delete('incoming-url');
-          const target = extractTargetUrl(textData);
+          const target = extractTargetUrl(rawShared);
           if (target) {
             urlInput.value = target;
             loadImageSource(target, false);
+          } else {
+            setStatus('共有データから画像URLを検出できませんでした');
           }
         }
       }
       window.history.replaceState({}, '', window.location.pathname);
     } catch (err) {
-      console.warn('共有データ読込エラー:', err);
+      console.warn('共有受取エラー:', err);
     }
   }
 }
@@ -116,7 +107,7 @@ if (document.readyState === 'loading') {
 }
 
 // =============================================================================
-// 画像URL解析・入力ハンドリング
+// 画像URL解析・入力ハンドリング（Google画像検索URL完全対応）
 // =============================================================================
 function extractTargetUrl(input) {
   const text = input ? input.trim() : '';

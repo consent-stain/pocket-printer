@@ -67,17 +67,17 @@
   <!-- メンテナンス＆診断パネル -->
   <div class="card" style="margin-top: 14px; background: #f8f9fa;">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-      <span style="font-size: 12px; font-weight: bold; color: #495057;">システム診断 / 管理</span>
+      <span style="font-size: 12px; font-weight: bold; color: #495057;">システム管理</span>
       <button id="btnClearCache" type="button" class="btn-clear-cache">キャッシュ削除・再読込</button>
     </div>
-    <div id="diagContent" style="font-size: 11px; color: #6c757d; font-family: monospace; line-height: 1.5;">診断待機中...</div>
+    <div id="diagContent" style="font-size: 11px; color: #6c757d; font-family: monospace; line-height: 1.5;">システム準備完了</div>
   </div>
 
   <script>
     const logBox = document.getElementById('diagContent');
     function logState(msg) {
       if (logBox) {
-        if (logBox.textContent === '診断待機中...') logBox.innerHTML = '';
+        if (logBox.textContent === 'システム準備完了') logBox.innerHTML = '';
         const div = document.createElement('div');
         div.textContent = msg;
         logBox.appendChild(div);
@@ -87,7 +87,6 @@
     // Manifestタグの動的確保
     let mLink = document.querySelector('link[rel="manifest"]');
     if (!mLink) {
-      logState('・Manifestタグを自動生成しました');
       mLink = document.createElement('link');
       mLink.rel = 'manifest';
       mLink.href = '/pocket-printer/manifest.json';
@@ -111,10 +110,10 @@
     (async () => {
       if ('serviceWorker' in navigator) {
         try {
-          const reg = await navigator.serviceWorker.register('/pocket-printer/sw.js?v=19', { scope: '/pocket-printer/' });
-          logState('・SW: 正常登録 (' + (reg.active ? '稼働中' : '準備中') + ')');
+          const reg = await navigator.serviceWorker.register('/pocket-printer/sw.js?v=20', { scope: '/pocket-printer/' });
+          logState('・SW稼働: ' + (reg.active ? 'Active' : '登録待機'));
         } catch (err) {
-          logState('・SW登録エラー: ' + err.message);
+          logState('・SWエラー: ' + err.message);
         }
       }
       try {
@@ -122,17 +121,13 @@
         if (res.ok) {
           const j = await res.json();
           logState('・Manifest: OK (' + j.short_name + ')');
-        } else {
-          logState('・Manifest取得失敗: HTTP ' + res.status);
         }
-      } catch (e) {
-        logState('・Manifestエラー: ' + e.message);
-      }
+      } catch (e) {}
     })();
 
     window.addEventListener('beforeinstallprompt', (e) => {
       window.hasPrompt = true;
-      logState('★インストール資格OK！ボタンを押せます');
+      logState('★インストール資格OK！');
     });
   </script>
   <script src="app.js"></script>
