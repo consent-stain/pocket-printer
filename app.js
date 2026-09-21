@@ -1,9 +1,20 @@
-const WIDTH_PX = 384;
-const WIDTH_BYTES = 48;
-const CHUNK_SIZE = 128;
-const CHUNK_DELAY = 12;
-const FEED_DOTS = 16;
+// Service Worker 登録
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js?v=17')
+      .then((reg) => console.log('SW登録OK:', reg.scope))
+      .catch((err) => console.warn('SW登録失敗:', err));
+  });
+}
 
+// C50 サーマルプリンター規格定数 (LPC50_95A5 ESC/POS)
+const WIDTH_PX = 384;
+const WIDTH_BYTES = 48; // 384 / 8
+const CHUNK_SIZE = 128; // BLE パケットサイズ
+const CHUNK_DELAY = 12; // パケット間ウェイト (ms)
+const FEED_DOTS = 16;   // 2.0mm余白 (8 dot/mm * 2.0mm)
+
+// DOM要素
 const statusEl = document.getElementById('status');
 const canvas = document.getElementById('previewCanvas');
 const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -39,63 +50,70 @@ const updateUI = () => {
   offsetRange.disabled = isPrinting;
 };
 
-window.addEventListener('beforeinstallprompt', (e) => {
-  e.preventDefault();
-  deferredPrompt = e;
-  if (btnInstall) btnInstall.style.display = 'inline-block';
-});
-
-if (btnInstall) {
-  btnInstall.addEventListener('click', async () => {
-    if (!deferredPrompt) return;
-    deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-    deferredPrompt = null;
-    btnInstall.style.display = 'none';
-  });
-}
-
-window.addEventListener('appinstalled', () => {
-  if (btnInstall) btnInstall.style.display = 'none';
-});
-
-async function checkSharedImage() {
+// =============================================================================
+// Web Share Target（共有受け取り：ファイル・URL両対応）
+// =============================================================================
+async function checkSharedData() {
   const params = new URLSearchParams(window.location.search);
   if (params.get('from_share') === '1') {
     try {
       const cache = await caches.open('shared-image');
-      const res = await cache.match('incoming-image');
-      if (res) {
-        const blob = await res.blob();
+      
+      // 1. ファイル受取チェック
+      const fileRes = await cache.match('incoming-image');
+      if (fileRes) {
+        const blob = await fileRes.blob();
         loadImageSource(URL.createObjectURL(blob), true);
         await cache.delete('incoming-image');
-        window.history.replaceState({}, '', window.location.pathname);
+      } else {
+        // 2. テキスト/URL受取チェック (Google画像検索など)
+        const urlRes = await cache.match('incoming-url');
+        if (urlRes) {
+          const sharedUrl = await urlRes.text();
+          await cache.delete('incoming-url');
+          const target = extractTargetUrl(sharedUrl);
+          if (target) {
+            urlInput.value = target;
+            loadImageSource(target, false);
+          } else {
+            setStatus('共有されたURLから画像を特定できませんでした');
+          }
+        }
       }
+      window.history.replaceState({}, '', window.location.pathname);
     } catch (err) {
-      console.warn('共有画像読込エラー:', err);
+      console.warn('共有データ読込エラー:', err);
     }
   }
 }
 
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', checkSharedImage);
+  document.addEventListener('DOMContentLoaded', checkSharedData);
 } else {
-  checkSharedImage();
+  checkSharedData();
 }
 
+// =============================================================================
+// 画像URL解析・入力ハンドリング（Google画像検索URL完全対応）
+// =============================================================================
 function extractTargetUrl(input) {
   const text = input ? input.trim() : '';
   if (!text) return null;
   if (text.startsWith('data:image/')) return text;
 
+  // テキスト中にURLが含まれている場合の抽出
+  const match = text.match(/https?:\/\/[^\s]+/);
+  const rawUrl = match ? match[0] : text;
+
   try {
-    const parsed = new URL(text);
+    const parsed = new URL(rawUrl);
+    // Google画像検索のimgurlパラメータ
     if (parsed.searchParams.has('imgurl')) {
       const decoded = decodeURIComponent(parsed.searchParams.get('imgurl'));
-      return decoded.startsWith('http://') || decoded.startsWith('https://') ? decoded : null;
+      return decoded.startsWith('http') ? decoded : null;
     }
     if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-      return text;
+      return rawUrl;
     }
     return null;
   } catch (_) {
@@ -117,6 +135,9 @@ urlInput.onkeydown = (e) => {
   if (e.key === 'Enter') handleUrlLoad();
 };
 
+// =============================================================================
+// 画像変換 (リサイズ + 大津2値化 + FS誤差拡散 + ESC/POSパッキング)
+// =============================================================================
 function renderAndProcess() {
   if (!sourceImage) return;
 
@@ -212,7 +233,7 @@ function renderAndProcess() {
 
         const pIdx = idx * 4;
         d[pIdx] = d[pIdx + 1] = d[pIdx + 2] = newVal;
-        d[pIdx + 3] = 255;
+        d[pIdx + 3] = 255; // 透過PNG対策
       }
       raster[rasterIdx++] = byte;
     }
@@ -236,17 +257,16 @@ function loadImageSource(src, isBlob = false) {
       if (currentToken !== loadCounter) {
         if (isBlob) URL.revokeObjectURL(src);
         resolve();
-        return;
+      } else {
+        if (currentBlobUrl && currentBlobUrl !== src) {
+          URL.revokeObjectURL(currentBlobUrl);
+        }
+        currentBlobUrl = isBlob ? src : null;
+        sourceImage = img;
+        renderAndProcess();
+        setStatus('印刷準備完了');
+        resolve();
       }
-      if (currentBlobUrl && currentBlobUrl !== src) {
-        URL.revokeObjectURL(currentBlobUrl);
-      }
-      currentBlobUrl = isBlob ? src : null;
-
-      sourceImage = img;
-      renderAndProcess();
-      setStatus('印刷準備完了');
-      resolve();
     };
 
     img.onerror = () => {
@@ -272,6 +292,9 @@ function loadImageSource(src, isBlob = false) {
   });
 }
 
+// =============================================================================
+// Bluetooth 通信制御 (LPC50_95A5 BLE 0xff00/0xff02)
+// =============================================================================
 const onDisconnected = () => {
   writeChar = null;
   isPrinting = false;
