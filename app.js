@@ -1,50 +1,3 @@
-// Manifestとアイコンの検証ログ
-(async () => {
-  const link = document.querySelector('link[rel="manifest"]');
-  if (!link) {
-    addDiag('エラー: manifest linkタグがありません');
-    return;
-  }
-  try {
-    const res = await fetch(link.href);
-    if (!res.ok) {
-      addDiag(`Manifest取得失敗: HTTP ${res.status}`);
-      return;
-    }
-    const json = await res.json();
-    addDiag(`Manifest読込OK: ${json.short_name || json.name}`);
-    
-    // アイコンの取得チェック
-    if (json.icons && json.icons.length > 0) {
-      const iconUrl = json.icons[0].src;
-      const imgRes = await fetch(iconUrl);
-      addDiag(`アイコン取得: HTTP ${imgRes.status}`);
-    } else {
-      addDiag('エラー: iconsが未定義です');
-    }
-  } catch (e) {
-    addDiag(`Manifestエラー: ${e.message}`);
-  }
-})();
-
-// 状態表示ログ
-function addDiag(msg) {
-  const el = document.getElementById('diagBar');
-  if (el) {
-    const time = new Date().toLocaleTimeString();
-    el.innerHTML += `<div>[${time}] ${msg}</div>`;
-  }
-}
-
-// Service Worker 登録（絶対パス）
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/pocket-printer/sw.js', { scope: '/pocket-printer/' })
-      .then((reg) => addDiag(`SW登録OK: ${reg.scope}`))
-      .catch((err) => addDiag(`SWエラー: ${err.message}`));
-  });
-}
-
 // C50 サーマルプリンター規格定数 (LPC50_95A5 ESC/POS)
 const WIDTH_PX = 384;
 const WIDTH_BYTES = 48; // 384 / 8
@@ -94,7 +47,6 @@ const updateUI = () => {
 window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
   deferredPrompt = e;
-  addDiag('インストール資格OK！ボタンを表示しました');
   if (btnInstall) {
     btnInstall.style.display = 'inline-block';
   }
@@ -105,7 +57,6 @@ if (btnInstall) {
     if (!deferredPrompt) return;
     deferredPrompt.prompt();
     const { outcome } = await deferredPrompt.userChoice;
-    addDiag(`インストール結果: ${outcome}`);
     deferredPrompt = null;
     btnInstall.style.display = 'none';
   });
@@ -113,7 +64,6 @@ if (btnInstall) {
 
 window.addEventListener('appinstalled', () => {
   if (btnInstall) btnInstall.style.display = 'none';
-  addDiag('アプリをインストールしました');
 });
 
 // =============================================================================
@@ -132,7 +82,7 @@ async function checkSharedImage() {
         window.history.replaceState({}, '', window.location.pathname);
       }
     } catch (err) {
-      addDiag(`共有画像読込エラー: ${err.message}`);
+      console.warn('共有画像読込エラー:', err);
     }
   }
 }
@@ -279,7 +229,7 @@ function renderAndProcess() {
 
         const pIdx = idx * 4;
         d[pIdx] = d[pIdx + 1] = d[pIdx + 2] = newVal;
-        d[pIdx + 3] = 255; // 透過PNGの描画バグ防止
+        d[pIdx + 3] = 255;
       }
       raster[rasterIdx++] = byte;
     }

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pocket-printer-v14';
+const CACHE_NAME = 'pocket-printer-v15';
 const ASSETS = [
   '/pocket-printer/',
   '/pocket-printer/index.html',
@@ -28,7 +28,6 @@ self.addEventListener('activate', (e) => {
 });
 
 self.addEventListener('fetch', (e) => {
-  // Web Share Target からの画像POST受付
   if (e.request.method === 'POST') {
     e.respondWith((async () => {
       try {
@@ -46,7 +45,6 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // GETリクエスト（オフライン対応）
   if (e.request.method === 'GET') {
     e.respondWith(
       caches.match(e.request, { ignoreSearch: true }).then((res) => res || fetch(e.request))

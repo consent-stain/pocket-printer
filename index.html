@@ -64,8 +64,80 @@
   <canvas id="previewCanvas" width="384" height="120"></canvas>
   <div id="status">プリンターに接続してください</div>
 
-  <!-- 診断ログバー -->
-  <div id="diagBar" class="diag-box"></div>
+  <!-- 確実に出力される自己完結型デバッグパネル -->
+  <div id="diagBar" class="diag-box">
+    <div style="font-weight: bold; margin-bottom: 4px;">PWAステータス診断:</div>
+    <div id="diagContent">診断中...</div>
+  </div>
+
+  <script>
+    // app.jsがクラッシュしても絶対に画面にログを残すインライン診断機構
+    const logBox = document.getElementById('diagContent');
+    function appendLog(msg) {
+      if (logBox) {
+        if (logBox.textContent === '診断中...') logBox.innerHTML = '';
+        const div = document.createElement('div');
+        div.textContent = msg;
+        logBox.appendChild(div);
+      }
+    }
+
+    window.addEventListener('error', (e) => {
+      appendLog('[JSエラー] ' + e.message);
+    });
+
+    (async () => {
+      // 1. Service Worker 登録と状態
+      if ('serviceWorker' in navigator) {
+        try {
+          const reg = await navigator.serviceWorker.register('/pocket-printer/sw.js', { scope: '/pocket-printer/' });
+          appendLog('・SW登録: 成功 (' + (reg.active ? '稼働中' : '準備中') + ')');
+        } catch (err) {
+          appendLog('・SW登録失敗: ' + err.message);
+        }
+      } else {
+        appendLog('・SW: ブラウザ非対応');
+      }
+
+      // 2. Manifest 疎通とJSON検証
+      const link = document.querySelector('link[rel="manifest"]');
+      if (!link) {
+        appendLog('・Manifest: タグなし');
+      } else {
+        try {
+          const res = await fetch(link.href);
+          if (!res.ok) {
+            appendLog('・Manifest取得失敗: HTTP ' + res.status);
+          } else {
+            const data = await res.json();
+            appendLog('・Manifest読込: OK (' + data.short_name + ')');
+            
+            // 3. アイコン取得テスト
+            if (data.icons && data.icons.length > 0) {
+              const imgRes = await fetch(data.icons[0].src);
+              appendLog('・アイコン取得: HTTP ' + imgRes.status + ' (' + imgRes.type + ')');
+            } else {
+              appendLog('・アイコン: 未定義');
+            }
+          }
+        } catch (e) {
+          appendLog('・Manifestパースエラー: ' + e.message);
+        }
+      }
+
+      // 4. インストール待機状態
+      setTimeout(() => {
+        if (!window.hasInstallPrompt) {
+          appendLog('・インストールプロンプト: 未受信（Chrome判定保留中または非対象）');
+        }
+      }, 2500);
+    })();
+
+    window.addEventListener('beforeinstallprompt', (e) => {
+      window.hasInstallPrompt = true;
+      appendLog('★インストールプロンプト受信完了！ボタン表示可');
+    });
+  </script>
 
   <script src="app.js"></script>
 </body>

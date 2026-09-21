@@ -160,11 +160,12 @@ input[type="text"] {
 
 .diag-box {
   font-size: 11px;
-  color: #495057;
-  background: #e9ecef;
-  padding: 8px 12px;
+  color: #212529;
+  background: #e2e3e5;
+  border: 1px solid #d3d6d8;
+  padding: 10px 12px;
   border-radius: 6px;
-  margin-top: 8px;
+  margin-top: 12px;
   font-family: monospace;
-  line-height: 1.5;
+  line-height: 1.6;
 }
