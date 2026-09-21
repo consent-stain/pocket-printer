@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#0d6efd">
   <title>ポケットプリンター</title>
-  <link rel="manifest" href="/pocket-printer/manifest.json">
-  <link rel="icon" href="/pocket-printer/icon-192.png" type="image/png">
-  <link rel="apple-touch-icon" href="/pocket-printer/icon-192.png">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icon-192.png">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -64,14 +64,14 @@
   <canvas id="previewCanvas" width="384" height="120"></canvas>
   <div id="status">プリンターに接続してください</div>
 
-  <!-- 確実に出力される自己完結型デバッグパネル -->
+  <!-- 診断ログバー -->
   <div id="diagBar" class="diag-box">
     <div style="font-weight: bold; margin-bottom: 4px;">PWAステータス診断:</div>
     <div id="diagContent">診断中...</div>
+    <button id="btnClearCache" type="button" style="margin-top: 8px; padding: 4px 8px; font-size: 11px; background: #6c757d; color: #fff;">キャッシュ強制リフレッシュ</button>
   </div>
 
   <script>
-    // app.jsがクラッシュしても絶対に画面にログを残すインライン診断機構
     const logBox = document.getElementById('diagContent');
     function appendLog(msg) {
       if (logBox) {
@@ -82,60 +82,71 @@
       }
     }
 
-    window.addEventListener('error', (e) => {
-      appendLog('[JSエラー] ' + e.message);
-    });
+    // Manifestタグの動的確保（タグが消えている場合の自己修復）
+    let mLink = document.querySelector('link[rel="manifest"]');
+    if (!mLink) {
+      appendLog('・警告: 静的タグ欠落 -> 動的注入実行');
+      mLink = document.createElement('link');
+      mLink.rel = 'manifest';
+      mLink.href = 'manifest.json';
+      document.head.appendChild(mLink);
+    }
+
+    // キャッシュ強制クリアボタン
+    document.getElementById('btnClearCache').onclick = async () => {
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        for (let r of regs) await r.unregister();
+      }
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        for (let k of keys) await caches.delete(k);
+      }
+      alert('キャッシュとSWを完全消去しました。ページを再読込します。');
+      window.location.reload(true);
+    };
 
     (async () => {
-      // 1. Service Worker 登録と状態
+      // 1. Service Worker 登録
       if ('serviceWorker' in navigator) {
         try {
-          const reg = await navigator.serviceWorker.register('/pocket-printer/sw.js', { scope: '/pocket-printer/' });
-          appendLog('・SW登録: 成功 (' + (reg.active ? '稼働中' : '準備中') + ')');
+          const reg = await navigator.serviceWorker.register('sw.js?v=16');
+          appendLog('・SW登録: OK (' + (reg.active ? '稼働中' : '更新待機中') + ')');
         } catch (err) {
-          appendLog('・SW登録失敗: ' + err.message);
+          appendLog('・SW登録エラー: ' + err.message);
         }
-      } else {
-        appendLog('・SW: ブラウザ非対応');
       }
 
-      // 2. Manifest 疎通とJSON検証
-      const link = document.querySelector('link[rel="manifest"]');
-      if (!link) {
-        appendLog('・Manifest: タグなし');
-      } else {
-        try {
-          const res = await fetch(link.href);
-          if (!res.ok) {
-            appendLog('・Manifest取得失敗: HTTP ' + res.status);
-          } else {
-            const data = await res.json();
-            appendLog('・Manifest読込: OK (' + data.short_name + ')');
-            
-            // 3. アイコン取得テスト
-            if (data.icons && data.icons.length > 0) {
-              const imgRes = await fetch(data.icons[0].src);
-              appendLog('・アイコン取得: HTTP ' + imgRes.status + ' (' + imgRes.type + ')');
-            } else {
-              appendLog('・アイコン: 未定義');
-            }
+      // 2. Manifest 疎通
+      try {
+        const res = await fetch(mLink.href + '?t=' + Date.now());
+        if (!res.ok) {
+          appendLog('・Manifest取得失敗: HTTP ' + res.status);
+        } else {
+          const data = await res.json();
+          appendLog('・Manifest読込: OK (' + data.short_name + ')');
+          
+          if (data.icons && data.icons.length > 0) {
+            const iconUrl = new URL(data.icons[0].src, window.location.href).href;
+            const imgRes = await fetch(iconUrl);
+            appendLog('・アイコン取得: HTTP ' + imgRes.status);
           }
-        } catch (e) {
-          appendLog('・Manifestパースエラー: ' + e.message);
         }
+      } catch (e) {
+        appendLog('・Manifest通信エラー: ' + e.message);
       }
 
-      // 4. インストール待機状態
+      // 3. インストール待機監視
       setTimeout(() => {
         if (!window.hasInstallPrompt) {
-          appendLog('・インストールプロンプト: 未受信（Chrome判定保留中または非対象）');
+          appendLog('・プロンプト: 待機中（Chromeの判定処理中）');
         }
-      }, 2500);
+      }, 3000);
     })();
 
     window.addEventListener('beforeinstallprompt', (e) => {
       window.hasInstallPrompt = true;
-      appendLog('★インストールプロンプト受信完了！ボタン表示可');
+      appendLog('★インストール資格OK！ボタンを押せます');
     });
   </script>
 

@@ -1,11 +1,9 @@
-// C50 サーマルプリンター規格定数 (LPC50_95A5 ESC/POS)
 const WIDTH_PX = 384;
-const WIDTH_BYTES = 48; // 384 / 8
-const CHUNK_SIZE = 128; // BLE パケットサイズ
-const CHUNK_DELAY = 12; // パケット間ウェイト (ms)
-const FEED_DOTS = 16;   // 2.0mm余白 (8 dot/mm * 2.0mm)
+const WIDTH_BYTES = 48;
+const CHUNK_SIZE = 128;
+const CHUNK_DELAY = 12;
+const FEED_DOTS = 16;
 
-// DOM要素
 const statusEl = document.getElementById('status');
 const canvas = document.getElementById('previewCanvas');
 const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -41,15 +39,10 @@ const updateUI = () => {
   offsetRange.disabled = isPrinting;
 };
 
-// =============================================================================
-// PWA インストールプロンプト制御
-// =============================================================================
 window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
   deferredPrompt = e;
-  if (btnInstall) {
-    btnInstall.style.display = 'inline-block';
-  }
+  if (btnInstall) btnInstall.style.display = 'inline-block';
 });
 
 if (btnInstall) {
@@ -66,9 +59,6 @@ window.addEventListener('appinstalled', () => {
   if (btnInstall) btnInstall.style.display = 'none';
 });
 
-// =============================================================================
-// Web Share Target（共有受け取り）
-// =============================================================================
 async function checkSharedImage() {
   const params = new URLSearchParams(window.location.search);
   if (params.get('from_share') === '1') {
@@ -93,9 +83,6 @@ if (document.readyState === 'loading') {
   checkSharedImage();
 }
 
-// =============================================================================
-// 画像URL入力・取得
-// =============================================================================
 function extractTargetUrl(input) {
   const text = input ? input.trim() : '';
   if (!text) return null;
@@ -130,9 +117,6 @@ urlInput.onkeydown = (e) => {
   if (e.key === 'Enter') handleUrlLoad();
 };
 
-// =============================================================================
-// 画像変換 (リサイズ + 大津2値化 + FS誤差拡散 + ESC/POSパッキング)
-// =============================================================================
 function renderAndProcess() {
   if (!sourceImage) return;
 
@@ -195,7 +179,6 @@ function renderAndProcess() {
   }
   threshold = Math.max(70, Math.min(185, threshold));
 
-  // ESC/POS GS v 0 ヘッダー
   const raster = new Uint8Array(8 + (WIDTH_BYTES * h));
   raster.set([
     0x1D, 0x76, 0x30, 0x00,
@@ -253,16 +236,17 @@ function loadImageSource(src, isBlob = false) {
       if (currentToken !== loadCounter) {
         if (isBlob) URL.revokeObjectURL(src);
         resolve();
-      } else {
-        if (currentBlobUrl && currentBlobUrl !== src) {
-          URL.revokeObjectURL(currentBlobUrl);
-        }
-        currentBlobUrl = isBlob ? src : null;
-        sourceImage = img;
-        renderAndProcess();
-        setStatus('印刷準備完了');
-        resolve();
+        return;
       }
+      if (currentBlobUrl && currentBlobUrl !== src) {
+        URL.revokeObjectURL(currentBlobUrl);
+      }
+      currentBlobUrl = isBlob ? src : null;
+
+      sourceImage = img;
+      renderAndProcess();
+      setStatus('印刷準備完了');
+      resolve();
     };
 
     img.onerror = () => {
@@ -288,9 +272,6 @@ function loadImageSource(src, isBlob = false) {
   });
 }
 
-// =============================================================================
-// Bluetooth 通信制御 (LPC50_95A5 BLE 0xff00/0xff02)
-// =============================================================================
 const onDisconnected = () => {
   writeChar = null;
   isPrinting = false;

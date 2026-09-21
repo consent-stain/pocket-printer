@@ -1,12 +1,12 @@
-const CACHE_NAME = 'pocket-printer-v15';
+const CACHE_NAME = 'pocket-printer-v16';
 const ASSETS = [
-  '/pocket-printer/',
-  '/pocket-printer/index.html',
-  '/pocket-printer/style.css',
-  '/pocket-printer/app.js',
-  '/pocket-printer/manifest.json',
-  '/pocket-printer/icon-192.png',
-  '/pocket-printer/icon-512.png'
+  './',
+  'index.html',
+  'style.css',
+  'app.js',
+  'manifest.json',
+  'icon-192.png',
+  'icon-512.png'
 ];
 
 self.addEventListener('install', (e) => {
@@ -40,7 +40,7 @@ self.addEventListener('fetch', (e) => {
       } catch (err) {
         console.error('POST共有エラー:', err);
       }
-      return Response.redirect('/pocket-printer/?from_share=1', 303);
+      return Response.redirect('index.html?from_share=1', 303);
     })());
     return;
   }
