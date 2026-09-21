@@ -1,4 +1,4 @@
-// Service Worker 即時登録 (SVGOMG仕様準拠: 相対パス登録)
+// Service Worker 登録（相対パス）
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js')
@@ -14,23 +14,22 @@ const CHUNK_SIZE = 128; // BLE パケットサイズ
 const CHUNK_DELAY = 12; // パケット間ウェイト (ms)
 const FEED_DOTS = 16;   // 2.0mm余白 (8 dot/mm * 2.0mm)
 
-// DOM要素参照
+// DOM要素
 const statusEl = document.getElementById('status');
 const canvas = document.getElementById('previewCanvas');
 const ctx = canvas.getContext('2d', { willReadFrequently: true });
 const btnConnect = document.getElementById('btnConnect');
 const btnPrint = document.getElementById('btnPrint');
+const btnInstall = document.getElementById('btnInstall');
 const modeSelect = document.getElementById('modeSelect');
 const offsetControl = document.getElementById('offsetControl');
 const offsetRange = document.getElementById('offsetRange');
 const offsetVal = document.getElementById('offsetVal');
 const urlInput = document.getElementById('urlInput');
-const btnPasteUrl = document.getElementById('btnPasteUrl');
 const btnLoadUrl = document.getElementById('btnLoadUrl');
 const selectZone = document.getElementById('selectZone');
 const fileInput = document.getElementById('fileInput');
 
-// 状態管理
 let bleDevice = null;
 let writeChar = null;
 let isPrinting = false;
@@ -38,6 +37,7 @@ let sourceImage = null;
 let cachedRaster = null;
 let loadCounter = 0;
 let currentBlobUrl = null;
+let deferredPrompt = null;
 
 const setStatus = (msg) => { statusEl.textContent = msg; };
 
@@ -46,14 +46,35 @@ const updateUI = () => {
   btnPrint.disabled = !(isConnected && cachedRaster && !isPrinting);
   btnConnect.disabled = isPrinting;
   btnLoadUrl.disabled = isPrinting;
-  btnPasteUrl.disabled = isPrinting;
   modeSelect.disabled = isPrinting;
   offsetRange.disabled = isPrinting;
 };
 
-// =============================================================================
-// URLパース・画像取得
-// =============================================================================
+// PWA インストールハンドラ
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredPrompt = e;
+  if (btnInstall) {
+    btnInstall.style.display = 'inline-block';
+  }
+});
+
+if (btnInstall) {
+  btnInstall.addEventListener('click', async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    console.log('インストール選択結果:', outcome);
+    deferredPrompt = null;
+    btnInstall.style.display = 'none';
+  });
+}
+
+window.addEventListener('appinstalled', () => {
+  if (btnInstall) btnInstall.style.display = 'none';
+  console.log('アプリがインストールされました');
+});
+
 function extractTargetUrl(input) {
   const text = input ? input.trim() : '';
   if (!text) return null;
@@ -84,26 +105,11 @@ urlInput.onkeydown = (e) => {
   if (e.key === 'Enter') handleUrlLoad();
 };
 
-btnPasteUrl.onclick = async () => {
-  try {
-    const text = await navigator.clipboard.readText();
-    if (text) {
-      urlInput.value = text;
-      handleUrlLoad();
-    }
-  } catch (_) {
-    setStatus('クリップボード読み取りを許可するか、直接貼り付けてください');
-  }
-};
-
-// =============================================================================
-// 画像変換 (リサイズ + 高速大津2値化 + FS誤差拡散 + ESC/POSラスタパッキング)
-// =============================================================================
 function renderAndProcess() {
   if (!sourceImage) return;
 
   const mode = modeSelect.value;
-  const hFixed = 230; // 5x3cm
+  const hFixed = 230;
   const h = (mode === 'free')
     ? Math.max(1, Math.round(sourceImage.height * (WIDTH_PX / sourceImage.width)))
     : hFixed;
@@ -145,7 +151,6 @@ function renderAndProcess() {
     sum += val;
   }
 
-  // 大津の2値化 (整数演算)
   let sumB = 0, wB = 0, varMax = 0, threshold = 128;
   for (let t = 0; t < 256; t++) {
     wB += hist[t];
@@ -162,7 +167,6 @@ function renderAndProcess() {
   }
   threshold = Math.max(70, Math.min(185, threshold));
 
-  // ESC/POS GS v 0 ヘッダー
   const raster = new Uint8Array(8 + (WIDTH_BYTES * h));
   raster.set([
     0x1D, 0x76, 0x30, 0x00,
@@ -170,7 +174,6 @@ function renderAndProcess() {
     h & 0xFF, (h >> 8) & 0xFF
   ], 0);
 
-  // Floyd-Steinberg 誤差拡散 & 1ビットパッキング
   let rasterIdx = 8;
   for (let y = 0; y < h; y++) {
     const row = y * WIDTH_PX;
@@ -220,17 +223,16 @@ function loadImageSource(src, isBlob = false) {
       if (currentToken !== loadCounter) {
         if (isBlob) URL.revokeObjectURL(src);
         resolve();
-        return;
+      } else {
+        if (currentBlobUrl && currentBlobUrl !== src) {
+          URL.revokeObjectURL(currentBlobUrl);
+        }
+        currentBlobUrl = isBlob ? src : null;
+        sourceImage = img;
+        renderAndProcess();
+        setStatus('印刷準備完了');
+        resolve();
       }
-      if (currentBlobUrl && currentBlobUrl !== src) {
-        URL.revokeObjectURL(currentBlobUrl);
-      }
-      currentBlobUrl = isBlob ? src : null;
-
-      sourceImage = img;
-      renderAndProcess();
-      setStatus('印刷準備完了');
-      resolve();
     };
 
     img.onerror = () => {
@@ -256,9 +258,6 @@ function loadImageSource(src, isBlob = false) {
   });
 }
 
-// =============================================================================
-// Bluetooth 通信制御 (LPC50_95A5 BLE 0xff00/0xff02)
-// =============================================================================
 const onDisconnected = () => {
   writeChar = null;
   isPrinting = false;
@@ -325,9 +324,6 @@ async function sendPacket(bytes) {
   }
 }
 
-// =============================================================================
-// イベントリスナー
-// =============================================================================
 modeSelect.onchange = () => {
   offsetControl.style.display = (modeSelect.value === 'fixed-crop') ? 'block' : 'none';
   renderAndProcess();

@@ -1,6 +1,8 @@
 :root {
   --primary: #0d6efd;
   --primary-hover: #0b5ed7;
+  --success: #198754;
+  --success-hover: #157347;
   --bg: #f8f9fa;
   --card-bg: #ffffff;
   --border: #dee2e6;
@@ -61,6 +63,16 @@ button.primary {
 
 button.primary:active {
   background: var(--primary-hover);
+}
+
+button.btn-install {
+  background: var(--success);
+  color: #ffffff;
+  border-color: var(--success);
+}
+
+button.btn-install:active {
+  background: var(--success-hover);
 }
 
 button:disabled {

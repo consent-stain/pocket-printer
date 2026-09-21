@@ -12,9 +12,10 @@
 </head>
 <body>
 
-  <!-- 通信制御 -->
+  <!-- 通信制御・PWAインストール -->
   <div class="card">
     <div class="btn-group">
+      <button id="btnInstall" type="button" class="btn-install" style="display: none;">アプリをインストール</button>
       <button id="btnConnect" type="button">プリンター接続</button>
       <button id="btnPrint" type="button" class="primary" disabled>印刷開始</button>
     </div>
@@ -26,12 +27,11 @@
       <span style="font-weight: bold;">画像URLから取得</span>
     </div>
     <div class="input-row">
-      <input type="text" id="urlInput" placeholder="画像のアドレスを貼り付け">
-      <button id="btnPasteUrl" type="button" style="flex: none; width: 60px;">貼付</button>
-      <button id="btnLoadUrl" type="button" class="primary" style="flex: none; width: 54px;">読込</button>
+      <input type="text" id="urlInput" placeholder="画像のアドレスを入力または長押しペースト">
+      <button id="btnLoadUrl" type="button" class="primary" style="flex: none; width: 64px;">読込</button>
     </div>
     <div class="help-text">
-      ※Web上の画像アドレスやBase64形式に対応しています。
+      ※Web上の画像アドレスやBase64（data:image/...）形式に対応しています。
     </div>
   </div>
 
