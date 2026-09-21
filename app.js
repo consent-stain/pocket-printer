@@ -85,25 +85,22 @@ pasteZone.addEventListener('paste', async (e) => {
   }
 });
 
-// Discordリンク・一般画像URLの抽出ロジック（クエリパラメータを完全維持）
+// Discordリンク・一般画像URL抽出ロジック（認証パラメータ維持）
 function extractTargetUrl(input) {
   if (!input) return null;
   const text = input.trim();
   if (text.startsWith('data:image/')) return text;
 
-  // Discordの cdn.discordapp.com / media.discordapp.net 等を含むURLを抽出
   const match = text.match(/https?:\/\/[^\s"'>]+/);
   if (!match) return null;
   const rawUrl = match[0];
 
   try {
     const parsed = new URL(rawUrl);
-    // Google画像検索等の imgurl パラメータ
     if (parsed.searchParams.has('imgurl')) {
       const decoded = decodeURIComponent(parsed.searchParams.get('imgurl'));
       if (decoded.startsWith('http')) return decoded;
     }
-    // Discord CDN (cdn.discordapp.com / media.discordapp.net) または一般的な画像URL
     if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
       return rawUrl;
     }
@@ -113,7 +110,6 @@ function extractTargetUrl(input) {
   }
 }
 
-// タイムアウト付きフェッチ
 async function fetchWithTimeout(url, options = {}, timeoutMs = 4000) {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
@@ -127,27 +123,23 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 4000) {
   }
 }
 
-// Discord画像等の外部URLを安全にBlob化（CORS制限・Canvas汚染防止）
 async function fetchImageBlob(src) {
   if (src.startsWith('blob:') || src.startsWith('data:')) {
     const res = await fetch(src);
     return await res.blob();
   }
 
-  // 1. 直接取得（CORSが通る場合）
   try {
     const directRes = await fetchWithTimeout(src, { mode: 'cors' }, 3000);
     if (directRes.ok) return await directRes.blob();
   } catch (_) {}
 
-  // 2. プロキシ1 (corsproxy.io: クエリパラメータも含めてエンコード)
   try {
     const p1 = `https://corsproxy.io/?${encodeURIComponent(src)}`;
     const r1 = await fetchWithTimeout(p1, {}, 4000);
     if (r1.ok) return await r1.blob();
   } catch (_) {}
 
-  // 3. プロキシ2 (allorigins)
   try {
     const p2 = `https://api.allorigins.win/raw?url=${encodeURIComponent(src)}`;
     const r2 = await fetchWithTimeout(p2, {}, 4000);
@@ -165,15 +157,15 @@ function renderAndProcess() {
 
   const mode = modeSelect.value;
   let targetH = 120;
-  const boxW_4x6 = 307; // 幅4cm
-  const boxH_4x6 = 461; // 高さ6cm
+  const boxW_5x6 = WIDTH_PX; // 幅5cm = 384px (用紙全幅)
+  const boxH_5x6 = 461;      // 高さ6cm = 461px
 
   if (mode === 'free') {
     targetH = Math.max(1, Math.round(sourceImage.height * (WIDTH_PX / sourceImage.width)));
   } else if (mode === 'fixed-fit' || mode === 'fixed-crop') {
     targetH = 230; // 5×3 cm
-  } else if (mode === 'fixed-4x6-fit' || mode === 'fixed-4x6-crop') {
-    targetH = boxH_4x6; // 4×6 cm
+  } else if (mode === 'fixed-5x6-fit' || mode === 'fixed-5x6-crop') {
+    targetH = boxH_5x6; // 5×6 cm
   }
 
   canvas.width = WIDTH_PX;
@@ -197,8 +189,8 @@ function renderAndProcess() {
     const offset = parseInt(offsetRange.value, 10) / 100;
     const dy = overflow > 0 ? -Math.round(overflow * offset) : Math.round((targetH - dh) / 2);
     ctx.drawImage(sourceImage, 0, dy, WIDTH_PX, dh);
-  } else if (mode === 'fixed-4x6-fit') {
-    const scale = Math.min(boxW_4x6 / sourceImage.width, boxH_4x6 / sourceImage.height);
+  } else if (mode === 'fixed-5x6-fit') {
+    const scale = Math.min(boxW_5x6 / sourceImage.width, boxH_5x6 / sourceImage.height);
     const dw = Math.round(sourceImage.width * scale);
     const dh = Math.round(sourceImage.height * scale);
     const dx = Math.round((WIDTH_PX - dw) / 2);
@@ -207,17 +199,16 @@ function renderAndProcess() {
     ctx.translate(WIDTH_PX, 0);
     ctx.scale(-1, 1);
     ctx.drawImage(sourceImage, dx, dy, dw, dh);
-  } else if (mode === 'fixed-4x6-crop') {
-    const scale = boxW_4x6 / sourceImage.width;
+  } else if (mode === 'fixed-5x6-crop') {
+    const scale = WIDTH_PX / sourceImage.width;
     const dh = Math.round(sourceImage.height * scale);
-    const overflow = dh - boxH_4x6;
+    const overflow = dh - boxH_5x6;
     const offset = parseInt(offsetRange.value, 10) / 100;
-    const dy = overflow > 0 ? -Math.round(overflow * offset) : Math.round((boxH_4x6 - dh) / 2);
-    const dx = Math.round((WIDTH_PX - boxW_4x6) / 2);
+    const dy = overflow > 0 ? -Math.round(overflow * offset) : Math.round((boxH_5x6 - dh) / 2);
 
     ctx.translate(WIDTH_PX, 0);
     ctx.scale(-1, 1);
-    ctx.drawImage(sourceImage, dx, dy, boxW_4x6, dh);
+    ctx.drawImage(sourceImage, 0, dy, WIDTH_PX, dh);
   }
   ctx.restore();
 
@@ -306,7 +297,6 @@ function loadImageSource(src, isBlob = false) {
       let finalUrl = src;
       let createdBlob = false;
 
-      // 外部URL（Discord含む）はBlob化してCanvas汚染・CORSエラーを防止
       if (!isBlob && !src.startsWith('data:')) {
         const blob = await fetchImageBlob(src);
         if (currentToken !== loadCounter) return;
@@ -416,7 +406,7 @@ async function sendPacket(bytes) {
 }
 
 modeSelect.onchange = () => {
-  const isCrop = (modeSelect.value === 'fixed-crop' || modeSelect.value === 'fixed-4x6-crop');
+  const isCrop = (modeSelect.value === 'fixed-crop' || modeSelect.value === 'fixed-5x6-crop');
   offsetControl.style.display = isCrop ? 'block' : 'none';
   renderAndProcess();
 };
