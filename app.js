@@ -37,13 +37,14 @@ const updateUI = () => {
 };
 
 // =============================================================================
-// 画像バイナリのペースト処理（Webサイトからの「画像をコピー」専用）
+// ペースト処理（画像バイナリ / Discord等の画像リンク両対応）
 // =============================================================================
-pasteZone.addEventListener('paste', (e) => {
+pasteZone.addEventListener('paste', async (e) => {
   e.preventDefault();
   const clipboard = e.clipboardData;
   if (!clipboard) return;
 
+  // 1. 画像バイナリ（「画像をコピー」）
   const items = clipboard.items;
   if (items) {
     for (let i = 0; i < items.length; i++) {
@@ -58,20 +59,103 @@ pasteZone.addEventListener('paste', (e) => {
     }
   }
 
+  // 2. HTML形式貼り付け内の img タグ
   const htmlData = clipboard.getData('text/html');
   if (htmlData) {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(htmlData, 'text/html');
-    const imgEl = doc.querySelector('img');
-    if (imgEl && imgEl.src && imgEl.src.startsWith('data:image/')) {
-      pasteZone.textContent = '【画像を貼り付けました】';
-      loadImageSource(imgEl.src, false);
+    const imgMatch = htmlData.match(/<img[^>]+src=["']([^"']+)["']/i);
+    if (imgMatch && imgMatch[1]) {
+      const src = imgMatch[1].replace(/&amp;/g, '&');
+      pasteZone.textContent = src;
+      loadImageSource(src, false);
       return;
     }
   }
 
-  setStatus('クリップボードに画像が見つかりませんでした。「画像をコピー」してから貼り付けてください。');
+  // 3. テキスト貼り付け（Discord画像URL、Web画像リンク等）
+  const rawText = clipboard.getData('text');
+  if (rawText) {
+    const targetUrl = extractTargetUrl(rawText);
+    if (targetUrl) {
+      pasteZone.textContent = targetUrl;
+      loadImageSource(targetUrl, false);
+    } else {
+      pasteZone.textContent = rawText.trim();
+      setStatus('画像または有効な画像リンクを認識できませんでした');
+    }
+  }
 });
+
+// Discordリンク・一般画像URLの抽出ロジック（クエリパラメータを完全維持）
+function extractTargetUrl(input) {
+  if (!input) return null;
+  const text = input.trim();
+  if (text.startsWith('data:image/')) return text;
+
+  // Discordの cdn.discordapp.com / media.discordapp.net 等を含むURLを抽出
+  const match = text.match(/https?:\/\/[^\s"'>]+/);
+  if (!match) return null;
+  const rawUrl = match[0];
+
+  try {
+    const parsed = new URL(rawUrl);
+    // Google画像検索等の imgurl パラメータ
+    if (parsed.searchParams.has('imgurl')) {
+      const decoded = decodeURIComponent(parsed.searchParams.get('imgurl'));
+      if (decoded.startsWith('http')) return decoded;
+    }
+    // Discord CDN (cdn.discordapp.com / media.discordapp.net) または一般的な画像URL
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return rawUrl;
+    }
+    return null;
+  } catch (_) {
+    return null;
+  }
+}
+
+// タイムアウト付きフェッチ
+async function fetchWithTimeout(url, options = {}, timeoutMs = 4000) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(id);
+    return res;
+  } catch (err) {
+    clearTimeout(id);
+    throw err;
+  }
+}
+
+// Discord画像等の外部URLを安全にBlob化（CORS制限・Canvas汚染防止）
+async function fetchImageBlob(src) {
+  if (src.startsWith('blob:') || src.startsWith('data:')) {
+    const res = await fetch(src);
+    return await res.blob();
+  }
+
+  // 1. 直接取得（CORSが通る場合）
+  try {
+    const directRes = await fetchWithTimeout(src, { mode: 'cors' }, 3000);
+    if (directRes.ok) return await directRes.blob();
+  } catch (_) {}
+
+  // 2. プロキシ1 (corsproxy.io: クエリパラメータも含めてエンコード)
+  try {
+    const p1 = `https://corsproxy.io/?${encodeURIComponent(src)}`;
+    const r1 = await fetchWithTimeout(p1, {}, 4000);
+    if (r1.ok) return await r1.blob();
+  } catch (_) {}
+
+  // 3. プロキシ2 (allorigins)
+  try {
+    const p2 = `https://api.allorigins.win/raw?url=${encodeURIComponent(src)}`;
+    const r2 = await fetchWithTimeout(p2, {}, 4000);
+    if (r2.ok) return await r2.blob();
+  } catch (_) {}
+
+  throw new Error('すべての画像取得経路が失敗しました');
+}
 
 // =============================================================================
 // 画像変換 (リサイズ + 左右反転 + 大津2値化 + FS誤差拡散 + ESC/POSパッキング)
@@ -114,7 +198,6 @@ function renderAndProcess() {
     const dy = overflow > 0 ? -Math.round(overflow * offset) : Math.round((targetH - dh) / 2);
     ctx.drawImage(sourceImage, 0, dy, WIDTH_PX, dh);
   } else if (mode === 'fixed-4x6-fit') {
-    // 4×6 cm 全体表示（左右反転）: 4x6cm枠内に収まるよう縮小して中央配置
     const scale = Math.min(boxW_4x6 / sourceImage.width, boxH_4x6 / sourceImage.height);
     const dw = Math.round(sourceImage.width * scale);
     const dh = Math.round(sourceImage.height * scale);
@@ -125,7 +208,6 @@ function renderAndProcess() {
     ctx.scale(-1, 1);
     ctx.drawImage(sourceImage, dx, dy, dw, dh);
   } else if (mode === 'fixed-4x6-crop') {
-    // 4×6 cm 上下位置調整（左右反転）: 幅4cm(307px)に横幅を合わせ、余剰高さをスライダーで調整
     const scale = boxW_4x6 / sourceImage.width;
     const dh = Math.round(sourceImage.height * scale);
     const overflow = dh - boxH_4x6;
@@ -219,32 +301,49 @@ function loadImageSource(src, isBlob = false) {
   const currentToken = ++loadCounter;
   setStatus('画像を処理しています...');
 
-  const img = new Image();
-  img.onload = () => {
-    if (currentToken !== loadCounter) {
-      if (isBlob) URL.revokeObjectURL(src);
-      return;
-    }
-    if (currentBlobUrl && currentBlobUrl !== src) {
-      URL.revokeObjectURL(currentBlobUrl);
-    }
-    currentBlobUrl = isBlob ? src : null;
-    sourceImage = img;
-    renderAndProcess();
-    setStatus('印刷準備完了');
-  };
+  (async () => {
+    try {
+      let finalUrl = src;
+      let createdBlob = false;
 
-  img.onerror = () => {
-    if (currentToken !== loadCounter) {
-      if (isBlob) URL.revokeObjectURL(src);
-      return;
-    }
-    if (isBlob) URL.revokeObjectURL(src);
-    setStatus('画像の読み込みに失敗しました');
-    updateUI();
-  };
+      // 外部URL（Discord含む）はBlob化してCanvas汚染・CORSエラーを防止
+      if (!isBlob && !src.startsWith('data:')) {
+        const blob = await fetchImageBlob(src);
+        if (currentToken !== loadCounter) return;
+        finalUrl = URL.createObjectURL(blob);
+        createdBlob = true;
+      }
 
-  img.src = src;
+      await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          if (currentToken !== loadCounter) {
+            if (createdBlob) URL.revokeObjectURL(finalUrl);
+            resolve();
+            return;
+          }
+          if (currentBlobUrl && currentBlobUrl !== finalUrl) {
+            URL.revokeObjectURL(currentBlobUrl);
+          }
+          currentBlobUrl = (isBlob || createdBlob) ? finalUrl : null;
+          sourceImage = img;
+          renderAndProcess();
+          setStatus('印刷準備完了');
+          resolve();
+        };
+        img.onerror = () => {
+          if (createdBlob) URL.revokeObjectURL(finalUrl);
+          reject(new Error('Image render failed'));
+        };
+        img.src = finalUrl;
+      });
+    } catch (err) {
+      if (currentToken === loadCounter) {
+        setStatus('画像の取得に失敗しました。リンクの有効期限やファイル選択をご確認ください。');
+        updateUI();
+      }
+    }
+  })();
 }
 
 // =============================================================================
