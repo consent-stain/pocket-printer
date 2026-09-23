@@ -1,10 +1,8 @@
 // C50 サーマルプリンター規格定数 (LPC50_95A5 ESC/POS)
 const WIDTH_PX = 384;
 const WIDTH_BYTES = 48;
-const CHUNK_SIZE = 64;       // バッファ溢れ防止のため1パケットを安全な64バイトに変更
-const CHUNK_DELAY = 15;      // 送信インターバル (ms)
-const BAND_HEIGHT = 120;     // 1ブロックあたりの最大行数（ファームウェア制限回避用）
-const BAND_DELAY = 80;       // ブロック間の印字・紙送り完了待機時間 (ms)
+const CHUNK_SIZE = 64;       // バッファ溢れを防ぐ安全なパケットサイズ
+const CHUNK_DELAY = 22;      // サーマルヘッドの物理加熱速度に同期させた送信間隔 (ms)
 const FEED_DOTS = 16;
 
 const statusEl = document.getElementById('status');
@@ -24,8 +22,7 @@ let bleDevice = null;
 let writeChar = null;
 let isPrinting = false;
 let sourceImage = null;
-let rawBitmapBytes = null; // プレーンな2値化ビットマップ配列 (幅48バイト x 高さH)
-let currentHeight = 0;
+let cachedRaster = null; // 単一GS v 0コマンドの完全連続ラスタデータ
 let loadCounter = 0;
 let currentBlobUrl = null;
 
@@ -33,7 +30,7 @@ const setStatus = (msg) => { statusEl.textContent = msg; };
 
 const updateUI = () => {
   const isConnected = Boolean(bleDevice?.gatt?.connected && writeChar);
-  btnPrint.disabled = !(isConnected && rawBitmapBytes && !isPrinting);
+  btnPrint.disabled = !(isConnected && cachedRaster && !isPrinting);
   btnConnect.disabled = isPrinting;
   modeSelect.disabled = isPrinting;
   offsetRange.disabled = isPrinting;
@@ -149,7 +146,7 @@ async function fetchImageBlob(src) {
 }
 
 // =============================================================================
-// 画像変換 (リサイズ + 左右反転 + 大津2値化 + FS誤差拡散 + バイトデータ保持)
+// 画像変換 (リサイズ + 左右反転 + 大津2値化 + FS誤差拡散 + ESC/POS単一パッキング)
 // =============================================================================
 function renderAndProcess() {
   if (!sourceImage) return;
@@ -167,7 +164,6 @@ function renderAndProcess() {
     targetH = boxH_5x6; // 5×6 cm
   }
 
-  currentHeight = targetH;
   canvas.width = WIDTH_PX;
   canvas.height = targetH;
 
@@ -243,10 +239,15 @@ function renderAndProcess() {
   }
   threshold = Math.max(70, Math.min(185, threshold));
 
-  // プレーンなビットマップ配列（幅48バイト x 高さtargetH）を作成
-  const bitmap = new Uint8Array(WIDTH_BYTES * targetH);
-  let bIdx = 0;
+  // 単一の完全連続ESC/POSラスタデータ（継ぎ目を物理的に排除）
+  const raster = new Uint8Array(8 + (WIDTH_BYTES * targetH));
+  raster.set([
+    0x1D, 0x76, 0x30, 0x00,
+    WIDTH_BYTES & 0xFF, (WIDTH_BYTES >> 8) & 0xFF,
+    targetH & 0xFF, (targetH >> 8) & 0xFF
+  ], 0);
 
+  let rasterIdx = 8;
   for (let y = 0; y < targetH; y++) {
     const row = y * WIDTH_PX;
     for (let x = 0; x < WIDTH_BYTES; x++) {
@@ -274,12 +275,12 @@ function renderAndProcess() {
         d[pIdx] = d[pIdx + 1] = d[pIdx + 2] = newVal;
         d[pIdx + 3] = 255;
       }
-      bitmap[bIdx++] = byte;
+      raster[rasterIdx++] = byte;
     }
   }
 
   ctx.putImageData(imgData, 0, 0);
-  rawBitmapBytes = bitmap;
+  cachedRaster = raster;
   updateUI();
 }
 
@@ -334,7 +335,7 @@ function loadImageSource(src, isBlob = false) {
 
 // =============================================================================
 // Bluetooth 通信制御 (LPC50_95A5 BLE 0xff00/0xff02)
-// 分割送信（バンディング）＋バッファ保護ウェイト制御
+// 完全シームレス単一送信 ＋ ペース制御（隙間ゼロ＆バッファオーバーフロー防止）
 // =============================================================================
 const onDisconnected = () => {
   writeChar = null;
@@ -370,43 +371,17 @@ btnConnect.onclick = async () => {
 };
 
 btnPrint.onclick = async () => {
-  if (!writeChar || !rawBitmapBytes || isPrinting) return;
+  if (!writeChar || !cachedRaster || isPrinting) return;
   isPrinting = true;
   updateUI();
 
   try {
-    setStatus('印刷中... (バッファ保護送信)');
+    setStatus('印刷中... (連続シームレス印刷)');
     // 初期化コマンド
     await sendPacket(new Uint8Array([0x10, 0xFF, 0xF1, 0x03, 0x10, 0xFF, 0x10, 0x00, 0x02]));
 
-    // 縦方向をBAND_HEIGHT（120行）ごとに分割して送信
-    const totalLines = currentHeight;
-    let currentLine = 0;
-
-    while (currentLine < totalLines) {
-      const linesInBand = Math.min(BAND_HEIGHT, totalLines - currentLine);
-      const bandHeader = new Uint8Array([
-        0x1D, 0x76, 0x30, 0x00,
-        WIDTH_BYTES & 0xFF, (WIDTH_BYTES >> 8) & 0xFF,
-        linesInBand & 0xFF, (linesInBand >> 8) & 0xFF
-      ]);
-
-      // ヘッダー送信
-      await sendPacket(bandHeader);
-
-      // 当該バンドの画像データを送信
-      const startByte = currentLine * WIDTH_BYTES;
-      const endByte = startByte + (linesInBand * WIDTH_BYTES);
-      const bandData = rawBitmapBytes.subarray(startByte, endByte);
-      await sendPacket(bandData);
-
-      currentLine += linesInBand;
-
-      // プリンターのサーマルヘッド加熱およびバッファ排出待機
-      if (currentLine < totalLines) {
-        await new Promise(r => setTimeout(r, BAND_DELAY));
-      }
-    }
+    // 画像全体を1本の完全なラスタとして送信（分割コマンドによる隙間を完全排除）
+    await sendPacket(cachedRaster);
 
     // 給紙・終了コマンド
     await sendPacket(new Uint8Array([0x1B, 0x4A, FEED_DOTS, 0x10, 0xFF, 0xF1, 0x45]));
@@ -429,6 +404,7 @@ async function sendPacket(bytes) {
     } else {
       await writeChar.writeValue(chunk);
     }
+    // プリンターの印字・給紙ヘッド速度と完全に同期させるディレイ
     await new Promise(r => setTimeout(r, CHUNK_DELAY));
   }
 }
