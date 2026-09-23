@@ -1,8 +1,6 @@
 // C50 サーマルプリンター規格定数 (LPC50_95A5 ESC/POS)
 const WIDTH_PX = 384;
-const WIDTH_BYTES = 48;
-const CHUNK_SIZE = 64;       // バッファ溢れを防ぐ安全なパケットサイズ
-const CHUNK_DELAY = 22;      // サーマルヘッドの物理加熱速度に同期させた送信間隔 (ms)
+const WIDTH_BYTES = 48; // 1行あたりのバイト数
 const FEED_DOTS = 16;
 
 const statusEl = document.getElementById('status');
@@ -22,7 +20,8 @@ let bleDevice = null;
 let writeChar = null;
 let isPrinting = false;
 let sourceImage = null;
-let cachedRaster = null; // 単一GS v 0コマンドの完全連続ラスタデータ
+let cachedRaster = null;
+let currentTotalLines = 0;
 let loadCounter = 0;
 let currentBlobUrl = null;
 
@@ -146,15 +145,15 @@ async function fetchImageBlob(src) {
 }
 
 // =============================================================================
-// 画像変換 (リサイズ + 左右反転 + 大津2値化 + FS誤差拡散 + ESC/POS単一パッキング)
+// 画像変換 (リサイズ + 左右反転 + 大津2値化 + FS誤差拡散 + ESC/POSラスタ生成)
 // =============================================================================
 function renderAndProcess() {
   if (!sourceImage) return;
 
   const mode = modeSelect.value;
   let targetH = 120;
-  const boxW_5x6 = WIDTH_PX; // 幅5cm = 384px
-  const boxH_5x6 = 461;      // 高さ6cm = 461px
+  const boxW_5x6 = WIDTH_PX; // 384px
+  const boxH_5x6 = 461;      // 461px
 
   if (mode === 'free') {
     targetH = Math.max(1, Math.round(sourceImage.height * (WIDTH_PX / sourceImage.width)));
@@ -164,6 +163,7 @@ function renderAndProcess() {
     targetH = boxH_5x6; // 5×6 cm
   }
 
+  currentTotalLines = targetH;
   canvas.width = WIDTH_PX;
   canvas.height = targetH;
 
@@ -239,7 +239,6 @@ function renderAndProcess() {
   }
   threshold = Math.max(70, Math.min(185, threshold));
 
-  // 単一の完全連続ESC/POSラスタデータ（継ぎ目を物理的に排除）
   const raster = new Uint8Array(8 + (WIDTH_BYTES * targetH));
   raster.set([
     0x1D, 0x76, 0x30, 0x00,
@@ -335,7 +334,7 @@ function loadImageSource(src, isBlob = false) {
 
 // =============================================================================
 // Bluetooth 通信制御 (LPC50_95A5 BLE 0xff00/0xff02)
-// 完全シームレス単一送信 ＋ ペース制御（隙間ゼロ＆バッファオーバーフロー防止）
+// 「行単位(48バイト)アライメント送信」でパケット欠落・隙間を徹底防止
 // =============================================================================
 const onDisconnected = () => {
   writeChar = null;
@@ -376,16 +375,36 @@ btnPrint.onclick = async () => {
   updateUI();
 
   try {
-    setStatus('印刷中... (連続シームレス印刷)');
-    // 初期化コマンド
-    await sendPacket(new Uint8Array([0x10, 0xFF, 0xF1, 0x03, 0x10, 0xFF, 0x10, 0x00, 0x02]));
+    setStatus('印刷中... (同期送信)');
+    // 1. 初期化コマンド
+    await sendRawChunk(new Uint8Array([0x10, 0xFF, 0xF1, 0x03, 0x10, 0xFF, 0x10, 0x00, 0x02]));
+    await new Promise(r => setTimeout(r, 40));
 
-    // 画像全体を1本の完全なラスタとして送信（分割コマンドによる隙間を完全排除）
-    await sendPacket(cachedRaster);
+    // 2. GS v 0 ヘッダー（8バイト）
+    const header = cachedRaster.subarray(0, 8);
+    await sendRawChunk(header);
+    await new Promise(r => setTimeout(r, 20));
 
-    // 給紙・終了コマンド
-    await sendPacket(new Uint8Array([0x1B, 0x4A, FEED_DOTS, 0x10, 0xFF, 0xF1, 0x45]));
+    // 3. 画像ビットマップデータを行単位（1行 = 48バイト）で厳密に送信
+    // 行の途中でパケットが分断されないため、データのドロップや横筋の隙間が物理的に発生しない
+    const data = cachedRaster.subarray(8);
+    const totalBytes = data.length;
+
+    for (let offset = 0; offset < totalBytes; offset += WIDTH_BYTES) {
+      if (!bleDevice?.gatt?.connected) throw new Error('通信が切断されました');
+
+      const lineChunk = data.subarray(offset, offset + WIDTH_BYTES);
+      await sendRawChunk(lineChunk);
+
+      // C50のサーマルヘッド加熱スピードに完全に同調（約12ms/行）
+      await new Promise(r => setTimeout(r, 12));
+    }
+
+    // 4. 給紙・印字終了
+    await new Promise(r => setTimeout(r, 60));
+    await sendRawChunk(new Uint8Array([0x1B, 0x4A, FEED_DOTS, 0x10, 0xFF, 0xF1, 0x45]));
     await new Promise(r => setTimeout(r, 100));
+
     setStatus('印刷が完了しました');
   } catch (err) {
     setStatus('印刷エラー: ' + (err.message || err));
@@ -395,17 +414,11 @@ btnPrint.onclick = async () => {
   }
 };
 
-async function sendPacket(bytes) {
-  for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
-    if (!bleDevice?.gatt?.connected) throw new Error('通信が切断されました');
-    const chunk = bytes.subarray(i, i + CHUNK_SIZE);
-    if (writeChar.writeValueWithResponse) {
-      await writeChar.writeValueWithResponse(chunk);
-    } else {
-      await writeChar.writeValue(chunk);
-    }
-    // プリンターの印字・給紙ヘッド速度と完全に同期させるディレイ
-    await new Promise(r => setTimeout(r, CHUNK_DELAY));
+async function sendRawChunk(chunk) {
+  if (writeChar.writeValueWithResponse) {
+    await writeChar.writeValueWithResponse(chunk);
+  } else {
+    await writeChar.writeValue(chunk);
   }
 }
 
