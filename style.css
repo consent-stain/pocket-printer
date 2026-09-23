@@ -54,11 +54,51 @@ button.primary {
 
 button.primary:active { background: var(--primary-hover); }
 
+button.secondary {
+  background: #e7f1ff;
+  color: var(--primary);
+  border-color: #b6d4fe;
+}
+button.secondary:active { background: #cfe2ff; }
+
 button:disabled {
   opacity: 0.35;
   cursor: not-allowed;
 }
 
+/* タブナビゲーション */
+.tab-nav {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.tab-btn {
+  flex: 1;
+  padding: 8px 4px;
+  font-size: 13px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #e9ecef;
+  color: var(--subtext);
+}
+
+.tab-btn.active {
+  background: var(--primary);
+  color: #ffffff;
+  border-color: var(--primary);
+  font-weight: bold;
+}
+
+.tab-content {
+  display: none;
+}
+
+.tab-content.active {
+  display: block;
+}
+
+/* 長押し貼り付け枠 */
 #pasteZone {
   min-height: 70px;
   border: 2px dashed #0d6efd;
@@ -92,6 +132,39 @@ button:disabled {
   pointer-events: none;
 }
 
+/* 文字入力可変リスト */
+.text-item-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.text-item-row span {
+  font-size: 16px;
+  color: var(--primary);
+  font-weight: bold;
+}
+
+.text-item-input {
+  flex: 1;
+  padding: 8px 10px;
+  font-size: 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.btn-remove-row {
+  flex: 0 0 32px;
+  padding: 8px 0;
+  background: #fff0f0;
+  border-color: #ffc9c9;
+  color: #dc3545;
+  font-size: 13px;
+  border-radius: 6px;
+}
+
 .field-row {
   display: flex;
   justify-content: space-between;
@@ -119,19 +192,25 @@ select {
 }
 
 #selectZone {
-  border: 2px dashed #adb5bd;
-  padding: 14px;
+  border: 2px dashed #0d6efd;
+  padding: 24px 14px;
   text-align: center;
-  color: var(--subtext);
-  border-radius: 6px;
+  color: #0d6efd;
+  border-radius: 8px;
   cursor: pointer;
-  font-size: 13px;
-  background: #fafafa;
+  font-size: 14px;
+  font-weight: 500;
+  background: #f8faff;
 }
 
 #selectZone:active {
   background: #e7f1ff;
-  border-color: var(--primary);
+}
+
+.help-text {
+  font-size: 11px;
+  color: var(--subtext);
+  line-height: 1.4;
 }
 
 #previewCanvas {

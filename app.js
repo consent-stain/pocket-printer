@@ -1,6 +1,6 @@
 // C50 サーマルプリンター規格定数 (LPC50_95A5 ESC/POS)
 const WIDTH_PX = 384;
-const WIDTH_BYTES = 48; // 1行あたりのバイト数
+const WIDTH_BYTES = 48; // 1行あたり48バイト
 const FEED_DOTS = 16;
 
 const statusEl = document.getElementById('status');
@@ -15,13 +15,17 @@ const offsetRange = document.getElementById('offsetRange');
 const offsetVal = document.getElementById('offsetVal');
 const selectZone = document.getElementById('selectZone');
 const fileInput = document.getElementById('fileInput');
+const imageSettingsCard = document.getElementById('imageSettingsCard');
+const textListContainer = document.getElementById('textListContainer');
+const btnAddRow = document.getElementById('btnAddRow');
+const btnClearText = document.getElementById('btnClearText');
 
 let bleDevice = null;
 let writeChar = null;
 let isPrinting = false;
+let currentTab = 'tab-paste'; // 'tab-paste' | 'tab-file' | 'tab-text'
 let sourceImage = null;
 let cachedRaster = null;
-let currentTotalLines = 0;
 let loadCounter = 0;
 let currentBlobUrl = null;
 
@@ -36,6 +40,160 @@ const updateUI = () => {
 };
 
 // =============================================================================
+// タブ切り替え制御
+// =============================================================================
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    if (isPrinting) return;
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+    btn.classList.add('active');
+    currentTab = btn.getAttribute('data-tab');
+    document.getElementById(currentTab).classList.add('active');
+
+    // 画像設定カードの表示制御（文字入力時は非表示）
+    imageSettingsCard.style.display = (currentTab === 'tab-text') ? 'none' : 'block';
+
+    if (currentTab === 'tab-text') {
+      renderTextList();
+    } else {
+      if (sourceImage) renderAndProcessImage();
+    }
+  });
+});
+
+// =============================================================================
+// 文字入力（箇条書き・可変行・自動文字サイズ均一化）
+// =============================================================================
+let textItems = [''];
+
+function renderTextInputs() {
+  textListContainer.innerHTML = '';
+  textItems.forEach((val, idx) => {
+    const row = document.createElement('div');
+    row.className = 'text-item-row';
+
+    const bullet = document.createElement('span');
+    bullet.textContent = '・';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'text-item-input';
+    input.placeholder = `項目 ${idx + 1}`;
+    input.value = val;
+    input.addEventListener('input', (e) => {
+      textItems[idx] = e.target.value;
+      renderTextList();
+    });
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'btn-remove-row';
+    removeBtn.textContent = '✕';
+    removeBtn.addEventListener('click', () => {
+      if (textItems.length > 1) {
+        textItems.splice(idx, 1);
+        renderTextInputs();
+        renderTextList();
+      } else {
+        textItems[0] = '';
+        renderTextInputs();
+        renderTextList();
+      }
+    });
+
+    row.appendChild(bullet);
+    row.appendChild(input);
+    row.appendChild(removeBtn);
+    textListContainer.appendChild(row);
+  });
+}
+
+btnAddRow.addEventListener('click', () => {
+  textItems.push('');
+  renderTextInputs();
+  const inputs = textListContainer.querySelectorAll('.text-item-input');
+  if (inputs.length) inputs[inputs.length - 1].focus();
+});
+
+btnClearText.addEventListener('click', () => {
+  textItems = [''];
+  renderTextInputs();
+  renderTextList();
+});
+
+// 文字列リストをCanvasに描画（最長文字数に応じて文字サイズを全体均一自動リサイズ、高さ自動可変）
+function renderTextList() {
+  const activeItems = textItems.map(t => t.trim()).filter(t => t.length > 0);
+  if (activeItems.length === 0) {
+    canvas.width = WIDTH_PX;
+    canvas.height = 80;
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, WIDTH_PX, 80);
+    ctx.fillStyle = '#adb5bd';
+    ctx.font = '16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('文字を入力してください', WIDTH_PX / 2, 45);
+    cachedRaster = null;
+    updateUI();
+    return;
+  }
+
+  // 利用可能な最大横幅 (384px - 左右マージン 32px - 中点スペース 24px)
+  const maxContentW = WIDTH_PX - 56;
+
+  // 1. 最長項目の長さに応じて文字サイズ（フォントサイズ）を自動算出
+  // 基本最大フォントサイズ: 28px、最小フォントサイズ: 14px
+  let fontSize = 28;
+  ctx.font = `bold ${fontSize}px sans-serif`;
+
+  let maxItemWidth = 0;
+  activeItems.forEach(item => {
+    const w = ctx.measureText(item).width;
+    if (w > maxItemWidth) maxItemWidth = w;
+  });
+
+  if (maxItemWidth > maxContentW) {
+    fontSize = Math.max(14, Math.floor(fontSize * (maxContentW / maxItemWidth)));
+  }
+
+  // 2. 行の高さと余白の計算
+  const lineHeight = Math.round(fontSize * 1.55);
+  const paddingY = 24;
+  const targetH = Math.max(80, (paddingY * 2) + (activeItems.length * lineHeight));
+
+  canvas.width = WIDTH_PX;
+  canvas.height = targetH;
+
+  // 背景白塗り
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, WIDTH_PX, targetH);
+
+  // 文字描画（高コントラスト黒）
+  ctx.fillStyle = '#000000';
+  ctx.font = `bold ${fontSize}px "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+
+  const startX = 24;
+  activeItems.forEach((item, index) => {
+    const y = paddingY + (index * lineHeight) + (lineHeight / 2);
+    // 箇条書き中点
+    ctx.fillText('・', startX, y);
+    // 項目テキスト
+    ctx.fillText(item, startX + fontSize + 4, y, maxContentW);
+  });
+
+  // ラスタ変換処理
+  packCanvasToRaster(targetH);
+  setStatus('印刷準備完了 (文字リスト)');
+}
+
+// 初期入力欄生成
+renderTextInputs();
+
+// =============================================================================
 // ペースト処理（画像バイナリ / Discord等の画像リンク両対応）
 // =============================================================================
 pasteZone.addEventListener('paste', async (e) => {
@@ -43,6 +201,7 @@ pasteZone.addEventListener('paste', async (e) => {
   const clipboard = e.clipboardData;
   if (!clipboard) return;
 
+  // 1. 画像バイナリ（「画像をコピー」）
   const items = clipboard.items;
   if (items) {
     for (let i = 0; i < items.length; i++) {
@@ -57,6 +216,7 @@ pasteZone.addEventListener('paste', async (e) => {
     }
   }
 
+  // 2. HTML形式貼り付け内の img タグ
   const htmlData = clipboard.getData('text/html');
   if (htmlData) {
     const imgMatch = htmlData.match(/<img[^>]+src=["']([^"']+)["']/i);
@@ -147,7 +307,7 @@ async function fetchImageBlob(src) {
 // =============================================================================
 // 画像変換 (リサイズ + 左右反転 + 大津2値化 + FS誤差拡散 + ESC/POSラスタ生成)
 // =============================================================================
-function renderAndProcess() {
+function renderAndProcessImage() {
   if (!sourceImage) return;
 
   const mode = modeSelect.value;
@@ -163,7 +323,6 @@ function renderAndProcess() {
     targetH = boxH_5x6; // 5×6 cm
   }
 
-  currentTotalLines = targetH;
   canvas.width = WIDTH_PX;
   canvas.height = targetH;
 
@@ -208,9 +367,15 @@ function renderAndProcess() {
   }
   ctx.restore();
 
-  const imgData = ctx.getImageData(0, 0, WIDTH_PX, targetH);
+  packCanvasToRaster(targetH);
+  setStatus('印刷準備完了 (画像)');
+}
+
+// Canvasの内容を2値化・ディザリングしてESC/POSラスタ配列へパック
+function packCanvasToRaster(h) {
+  const imgData = ctx.getImageData(0, 0, WIDTH_PX, h);
   const d = imgData.data;
-  const total = WIDTH_PX * targetH;
+  const total = WIDTH_PX * h;
 
   const gray = new Float32Array(total);
   const hist = new Int32Array(256);
@@ -239,15 +404,15 @@ function renderAndProcess() {
   }
   threshold = Math.max(70, Math.min(185, threshold));
 
-  const raster = new Uint8Array(8 + (WIDTH_BYTES * targetH));
+  const raster = new Uint8Array(8 + (WIDTH_BYTES * h));
   raster.set([
     0x1D, 0x76, 0x30, 0x00,
     WIDTH_BYTES & 0xFF, (WIDTH_BYTES >> 8) & 0xFF,
-    targetH & 0xFF, (targetH >> 8) & 0xFF
+    h & 0xFF, (h >> 8) & 0xFF
   ], 0);
 
   let rasterIdx = 8;
-  for (let y = 0; y < targetH; y++) {
+  for (let y = 0; y < h; y++) {
     const row = y * WIDTH_PX;
     for (let x = 0; x < WIDTH_BYTES; x++) {
       let byte = 0;
@@ -261,7 +426,7 @@ function renderAndProcess() {
         const err = oldVal - newVal;
 
         if (px + 1 < WIDTH_PX) gray[idx + 1] += err * 0.4375;
-        if (y + 1 < targetH) {
+        if (y + 1 < h) {
           const next = idx + WIDTH_PX;
           if (px > 0) gray[next - 1] += err * 0.1875;
           gray[next] += err * 0.3125;
@@ -313,8 +478,7 @@ function loadImageSource(src, isBlob = false) {
           }
           currentBlobUrl = (isBlob || createdBlob) ? finalUrl : null;
           sourceImage = img;
-          renderAndProcess();
-          setStatus('印刷準備完了');
+          renderAndProcessImage();
           resolve();
         };
         img.onerror = () => {
@@ -333,8 +497,7 @@ function loadImageSource(src, isBlob = false) {
 }
 
 // =============================================================================
-// Bluetooth 通信制御 (LPC50_95A5 BLE 0xff00/0xff02)
-// 「行単位(48バイト)アライメント送信」でパケット欠落・隙間を徹底防止
+// Bluetooth 通信制御 (1行48バイト固定同期送信)
 // =============================================================================
 const onDisconnected = () => {
   writeChar = null;
@@ -386,7 +549,6 @@ btnPrint.onclick = async () => {
     await new Promise(r => setTimeout(r, 20));
 
     // 3. 画像ビットマップデータを行単位（1行 = 48バイト）で厳密に送信
-    // 行の途中でパケットが分断されないため、データのドロップや横筋の隙間が物理的に発生しない
     const data = cachedRaster.subarray(8);
     const totalBytes = data.length;
 
@@ -395,8 +557,6 @@ btnPrint.onclick = async () => {
 
       const lineChunk = data.subarray(offset, offset + WIDTH_BYTES);
       await sendRawChunk(lineChunk);
-
-      // C50のサーマルヘッド加熱スピードに完全に同調（約12ms/行）
       await new Promise(r => setTimeout(r, 12));
     }
 
@@ -425,13 +585,13 @@ async function sendRawChunk(chunk) {
 modeSelect.onchange = () => {
   const isCrop = (modeSelect.value === 'fixed-crop' || modeSelect.value === 'fixed-5x6-crop');
   offsetControl.style.display = isCrop ? 'block' : 'none';
-  renderAndProcess();
+  if (sourceImage) renderAndProcessImage();
 };
 
 offsetRange.oninput = () => {
   const v = parseInt(offsetRange.value, 10);
   offsetVal.textContent = (v === 0) ? '上寄り' : (v === 50) ? '中央' : (v === 100) ? '下寄り' : (v + '%');
-  renderAndProcess();
+  if (sourceImage) renderAndProcessImage();
 };
 
 selectZone.onclick = () => {

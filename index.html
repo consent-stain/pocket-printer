@@ -16,17 +16,53 @@
     </div>
   </div>
 
-  <!-- 画像貼り付けエリア（画像・URL両対応） -->
-  <div class="card">
-    <div style="font-size: 13px; font-weight: bold; margin-bottom: 6px; color: #495057;">画像・画像リンクの貼り付け</div>
-    <div id="pasteZone" contenteditable="true" spellcheck="false" data-placeholder="ここを長押しして「貼り付け」&#10;（コピーした画像 / Discordなどの画像リンク）"></div>
-    <div id="pasteHint" style="font-size: 11px; color: #6c757d; margin-top: 6px; line-height: 1.4;">
-      ※「画像をコピー」したデータや、Discord等の画像リンク（cdn.discordapp.com等）を長押しペーストできます。
+  <!-- ナビゲーションタブ -->
+  <div class="tab-nav">
+    <button type="button" class="tab-btn active" data-tab="tab-paste">画像リンク貼付</button>
+    <button type="button" class="tab-btn" data-tab="tab-file">画像ファイル</button>
+    <button type="button" class="tab-btn" data-tab="tab-text">文字入力</button>
+  </div>
+
+  <!-- タブ1: 画像貼り付け -->
+  <div id="tab-paste" class="tab-content active">
+    <div class="card">
+      <div style="font-size: 13px; font-weight: bold; margin-bottom: 6px; color: #495057;">画像・画像リンクの貼り付け</div>
+      <div id="pasteZone" contenteditable="true" spellcheck="false" data-placeholder="ここを長押しして「貼り付け」&#10;（コピーした画像 / Discordなどの画像リンク）"></div>
+      <div class="help-text" style="margin-top: 6px;">
+        ※「画像をコピー」したデータや、Discord等の画像リンク（cdn.discordapp.com等）を長押しペーストできます。
+      </div>
     </div>
   </div>
 
-  <!-- 印刷設定・ファイル選択 -->
-  <div class="card">
+  <!-- タブ2: 端末内の画像ファイル選択 -->
+  <div id="tab-file" class="tab-content">
+    <div class="card">
+      <div id="selectZone">
+        📁 ここをタップして端末内の画像を選択
+        <input type="file" id="fileInput" accept="image/*" style="display: none;">
+      </div>
+    </div>
+  </div>
+
+  <!-- タブ3: 文字入力（箇条書き・自動可変） -->
+  <div id="tab-text" class="tab-content">
+    <div class="card">
+      <div style="font-size: 13px; font-weight: bold; margin-bottom: 6px; color: #495057;">箇条書きリスト印刷</div>
+      <div id="textListContainer">
+        <!-- JSで可変入力欄を動的生成 -->
+      </div>
+      <div class="btn-group" style="margin-top: 8px;">
+        <button id="btnAddRow" type="button" class="secondary">+ 項目を追加</button>
+        <button id="btnClearText" type="button">全クリア</button>
+      </div>
+      <div class="help-text" style="margin-top: 8px;">
+        ※自動で先頭に中点「・」が付与されます。文字サイズは最長行に合わせて均一に自動調整され、項目の数に応じて長さも自動可変します。
+      </div>
+    </div>
+  </div>
+
+  <!-- 印刷設定（画像タブ選択時のみ表示） -->
+  <div id="imageSettingsCard" class="card">
     <div class="field-row">
       <span>印刷サイズ / オプション</span>
       <select id="modeSelect">
@@ -44,11 +80,6 @@
         <span id="offsetVal">中央</span>
       </div>
       <input type="range" id="offsetRange" min="0" max="100" value="50" style="width: 100%;">
-    </div>
-
-    <div id="selectZone">
-      端末内の画像ファイルを選択
-      <input type="file" id="fileInput" accept="image/*" style="display: none;">
     </div>
   </div>
 
