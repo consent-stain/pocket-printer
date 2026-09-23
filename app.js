@@ -1,8 +1,10 @@
 // C50 サーマルプリンター規格定数 (LPC50_95A5 ESC/POS)
 const WIDTH_PX = 384;
 const WIDTH_BYTES = 48;
-const CHUNK_SIZE = 128;
-const CHUNK_DELAY = 12;
+const CHUNK_SIZE = 64;       // バッファ溢れ防止のため1パケットを安全な64バイトに変更
+const CHUNK_DELAY = 15;      // 送信インターバル (ms)
+const BAND_HEIGHT = 120;     // 1ブロックあたりの最大行数（ファームウェア制限回避用）
+const BAND_DELAY = 80;       // ブロック間の印字・紙送り完了待機時間 (ms)
 const FEED_DOTS = 16;
 
 const statusEl = document.getElementById('status');
@@ -22,7 +24,8 @@ let bleDevice = null;
 let writeChar = null;
 let isPrinting = false;
 let sourceImage = null;
-let cachedRaster = null;
+let rawBitmapBytes = null; // プレーンな2値化ビットマップ配列 (幅48バイト x 高さH)
+let currentHeight = 0;
 let loadCounter = 0;
 let currentBlobUrl = null;
 
@@ -30,7 +33,7 @@ const setStatus = (msg) => { statusEl.textContent = msg; };
 
 const updateUI = () => {
   const isConnected = Boolean(bleDevice?.gatt?.connected && writeChar);
-  btnPrint.disabled = !(isConnected && cachedRaster && !isPrinting);
+  btnPrint.disabled = !(isConnected && rawBitmapBytes && !isPrinting);
   btnConnect.disabled = isPrinting;
   modeSelect.disabled = isPrinting;
   offsetRange.disabled = isPrinting;
@@ -44,7 +47,6 @@ pasteZone.addEventListener('paste', async (e) => {
   const clipboard = e.clipboardData;
   if (!clipboard) return;
 
-  // 1. 画像バイナリ（「画像をコピー」）
   const items = clipboard.items;
   if (items) {
     for (let i = 0; i < items.length; i++) {
@@ -59,7 +61,6 @@ pasteZone.addEventListener('paste', async (e) => {
     }
   }
 
-  // 2. HTML形式貼り付け内の img タグ
   const htmlData = clipboard.getData('text/html');
   if (htmlData) {
     const imgMatch = htmlData.match(/<img[^>]+src=["']([^"']+)["']/i);
@@ -71,7 +72,6 @@ pasteZone.addEventListener('paste', async (e) => {
     }
   }
 
-  // 3. テキスト貼り付け（Discord画像URL、Web画像リンク等）
   const rawText = clipboard.getData('text');
   if (rawText) {
     const targetUrl = extractTargetUrl(rawText);
@@ -85,7 +85,6 @@ pasteZone.addEventListener('paste', async (e) => {
   }
 });
 
-// Discordリンク・一般画像URL抽出ロジック（認証パラメータ維持）
 function extractTargetUrl(input) {
   if (!input) return null;
   const text = input.trim();
@@ -150,14 +149,14 @@ async function fetchImageBlob(src) {
 }
 
 // =============================================================================
-// 画像変換 (リサイズ + 左右反転 + 大津2値化 + FS誤差拡散 + ESC/POSパッキング)
+// 画像変換 (リサイズ + 左右反転 + 大津2値化 + FS誤差拡散 + バイトデータ保持)
 // =============================================================================
 function renderAndProcess() {
   if (!sourceImage) return;
 
   const mode = modeSelect.value;
   let targetH = 120;
-  const boxW_5x6 = WIDTH_PX; // 幅5cm = 384px (用紙全幅)
+  const boxW_5x6 = WIDTH_PX; // 幅5cm = 384px
   const boxH_5x6 = 461;      // 高さ6cm = 461px
 
   if (mode === 'free') {
@@ -168,6 +167,7 @@ function renderAndProcess() {
     targetH = boxH_5x6; // 5×6 cm
   }
 
+  currentHeight = targetH;
   canvas.width = WIDTH_PX;
   canvas.height = targetH;
 
@@ -243,14 +243,10 @@ function renderAndProcess() {
   }
   threshold = Math.max(70, Math.min(185, threshold));
 
-  const raster = new Uint8Array(8 + (WIDTH_BYTES * targetH));
-  raster.set([
-    0x1D, 0x76, 0x30, 0x00,
-    WIDTH_BYTES & 0xFF, (WIDTH_BYTES >> 8) & 0xFF,
-    targetH & 0xFF, (targetH >> 8) & 0xFF
-  ], 0);
+  // プレーンなビットマップ配列（幅48バイト x 高さtargetH）を作成
+  const bitmap = new Uint8Array(WIDTH_BYTES * targetH);
+  let bIdx = 0;
 
-  let rasterIdx = 8;
   for (let y = 0; y < targetH; y++) {
     const row = y * WIDTH_PX;
     for (let x = 0; x < WIDTH_BYTES; x++) {
@@ -278,12 +274,12 @@ function renderAndProcess() {
         d[pIdx] = d[pIdx + 1] = d[pIdx + 2] = newVal;
         d[pIdx + 3] = 255;
       }
-      raster[rasterIdx++] = byte;
+      bitmap[bIdx++] = byte;
     }
   }
 
   ctx.putImageData(imgData, 0, 0);
-  cachedRaster = raster;
+  rawBitmapBytes = bitmap;
   updateUI();
 }
 
@@ -338,6 +334,7 @@ function loadImageSource(src, isBlob = false) {
 
 // =============================================================================
 // Bluetooth 通信制御 (LPC50_95A5 BLE 0xff00/0xff02)
+// 分割送信（バンディング）＋バッファ保護ウェイト制御
 // =============================================================================
 const onDisconnected = () => {
   writeChar = null;
@@ -373,16 +370,47 @@ btnConnect.onclick = async () => {
 };
 
 btnPrint.onclick = async () => {
-  if (!writeChar || !cachedRaster || isPrinting) return;
+  if (!writeChar || !rawBitmapBytes || isPrinting) return;
   isPrinting = true;
   updateUI();
 
   try {
-    setStatus('印刷データを送信中...');
+    setStatus('印刷中... (バッファ保護送信)');
+    // 初期化コマンド
     await sendPacket(new Uint8Array([0x10, 0xFF, 0xF1, 0x03, 0x10, 0xFF, 0x10, 0x00, 0x02]));
-    await sendPacket(cachedRaster);
+
+    // 縦方向をBAND_HEIGHT（120行）ごとに分割して送信
+    const totalLines = currentHeight;
+    let currentLine = 0;
+
+    while (currentLine < totalLines) {
+      const linesInBand = Math.min(BAND_HEIGHT, totalLines - currentLine);
+      const bandHeader = new Uint8Array([
+        0x1D, 0x76, 0x30, 0x00,
+        WIDTH_BYTES & 0xFF, (WIDTH_BYTES >> 8) & 0xFF,
+        linesInBand & 0xFF, (linesInBand >> 8) & 0xFF
+      ]);
+
+      // ヘッダー送信
+      await sendPacket(bandHeader);
+
+      // 当該バンドの画像データを送信
+      const startByte = currentLine * WIDTH_BYTES;
+      const endByte = startByte + (linesInBand * WIDTH_BYTES);
+      const bandData = rawBitmapBytes.subarray(startByte, endByte);
+      await sendPacket(bandData);
+
+      currentLine += linesInBand;
+
+      // プリンターのサーマルヘッド加熱およびバッファ排出待機
+      if (currentLine < totalLines) {
+        await new Promise(r => setTimeout(r, BAND_DELAY));
+      }
+    }
+
+    // 給紙・終了コマンド
     await sendPacket(new Uint8Array([0x1B, 0x4A, FEED_DOTS, 0x10, 0xFF, 0xF1, 0x45]));
-    await new Promise(r => setTimeout(r, 80));
+    await new Promise(r => setTimeout(r, 100));
     setStatus('印刷が完了しました');
   } catch (err) {
     setStatus('印刷エラー: ' + (err.message || err));
